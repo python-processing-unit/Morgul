@@ -2,6 +2,10 @@
 
 Minimal Windows 11 Notepad-style **Markdown** editor with optional encryption.
 
+<p align="center">
+  <img width="100%" alt="Screenshot of Morgul" src="./assets/screenshot.png">
+</p>
+
 ## Features
 
 - Tabbed editing (new / open / close, dirty stars)

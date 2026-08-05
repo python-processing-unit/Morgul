@@ -7,7 +7,16 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QObject,
+    QRect,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -19,11 +28,14 @@ from PySide6.QtGui import (
     QKeySequence,
     QMouseEvent,
     QPainter,
+    QPaintEvent,
     QPen,
+    QResizeEvent,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextFormat,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -196,6 +208,126 @@ def _doc_end_position(document: QTextDocument) -> int:
     cursor = QTextCursor(document)
     cursor.movePosition(QTextCursor.MoveOperation.End)
     return cursor.position()
+
+
+class _LineNumberArea(QWidget):
+    """Narrow gutter that paints line numbers for :class:`SourceEditor`."""
+
+    def __init__(self, editor: SourceEditor) -> None:
+        """Bind to *editor*."""
+        super().__init__(editor)
+        self._editor = editor
+
+    @override
+    def sizeHint(self) -> QSize:
+        """Return the preferred gutter width.
+
+        Returns:
+            Width from the editor's digit metrics; height unused by layout.
+        """
+        return QSize(self._editor.line_number_area_width(), 0)
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        """Delegate painting to the owning editor."""
+        self._editor.paint_line_numbers(event)
+
+
+class SourceEditor(QPlainTextEdit):
+    """Markdown source editor with a line-number gutter."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        """Build the editor and its gutter."""
+        super().__init__(parent)
+        self._gutter = _LineNumberArea(self)
+        self._overlays: list[QTextEdit.ExtraSelection] = []
+        self.blockCountChanged.connect(self._update_gutter_width)
+        self.updateRequest.connect(self._update_gutter)
+        self.cursorPositionChanged.connect(self._highlight_current_line)
+        self._update_gutter_width(0)
+        self._highlight_current_line()
+
+    def line_number_area_width(self) -> int:
+        """Width in pixels needed for the current last line number.
+
+        Returns:
+            Gutter width including padding.
+        """
+        digits = max(1, len(str(max(1, self.blockCount()))))
+        return 12 + self.fontMetrics().horizontalAdvance("9") * digits
+
+    def set_overlay_selections(self, overlays: list[QTextEdit.ExtraSelection]) -> None:
+        """Set non-line overlays (e.g. find hits) and rebuild extras."""
+        self._overlays = overlays
+        self._highlight_current_line()
+
+    def paint_line_numbers(self, event: QPaintEvent) -> None:
+        """Paint visible line numbers into the gutter."""
+        painter = QPainter(self._gutter)
+        painter.fillRect(event.rect(), QColor("#252526"))
+        block = self.firstVisibleBlock()
+        block_number = block.blockNumber()
+        top = round(
+            self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
+        )
+        bottom = top + round(self.blockBoundingRect(block).height())
+        color = QColor("#858585")
+        current = QColor("#c6c6c6")
+        current_block = self.textCursor().blockNumber()
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible() and bottom >= event.rect().top():
+                painter.setPen(current if block_number == current_block else color)
+                painter.drawText(
+                    0,
+                    top,
+                    self._gutter.width() - 6,
+                    self.fontMetrics().height(),
+                    Qt.AlignmentFlag.AlignRight,
+                    str(block_number + 1),
+                )
+            block = block.next()
+            top = bottom
+            bottom = top + round(self.blockBoundingRect(block).height())
+            block_number += 1
+        painter.end()
+
+    def _update_gutter_width(self, _block_count: int) -> None:
+        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+
+    def _update_gutter(self, rect: QRect, dy: int) -> None:
+        if dy:
+            self._gutter.scroll(0, dy)
+        else:
+            self._gutter.update(0, rect.y(), self._gutter.width(), rect.height())
+        if rect.contains(self.viewport().rect()):
+            self._update_gutter_width(0)
+
+    def _highlight_current_line(self) -> None:
+        selections: list[QTextEdit.ExtraSelection] = []
+        if not self.isReadOnly():
+            line = QTextEdit.ExtraSelection()
+            line.format.setBackground(QColor("#2a2d2e"))
+            line.format.setProperty(
+                QTextFormat.Property.FullWidthSelection,
+                1,  # Qt treats non-zero as true for FullWidthSelection
+            )
+            line.cursor = self.textCursor()
+            line.cursor.clearSelection()
+            selections.append(line)
+        selections.extend(self._overlays)
+        self.setExtraSelections(selections)
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Keep the gutter docked to the left of the viewport."""
+        super().resizeEvent(event)
+        contents = self.contentsRect()
+        self._gutter.setGeometry(
+            contents.left(),
+            contents.top(),
+            self.line_number_area_width(),
+            contents.height(),
+        )
 
 
 class _InactiveCaret(QObject):
@@ -638,7 +770,7 @@ class EditorTab(QWidget):
         self.wrap_on = True
         self.preview_on = True
 
-        self.editor = QPlainTextEdit()
+        self.editor = SourceEditor()
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.editor.setTabStopDistance(32)
         self.editor.setFont(_editor_font())
@@ -844,11 +976,11 @@ class EditorTab(QWidget):
             fmt.setBackground(bright if index == current else dim)
             sel.format = fmt
             selections.append(sel)
-        self.editor.setExtraSelections(selections)
+        self.editor.set_overlay_selections(selections)
 
     def clear_find_highlights(self) -> None:
         """Remove find ExtraSelections."""
-        self.editor.setExtraSelections([])
+        self.editor.set_overlay_selections([])
 
     def reveal_match(self, hit: Match) -> None:
         """Select *hit* and scroll it into view."""

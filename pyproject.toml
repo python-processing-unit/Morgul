@@ -25,6 +25,8 @@ dependencies = [
     "PySide6-Essentials>=6.6.0",
     # typing.override back-port (stdlib only since 3.12). 4.4.0 first shipped it.
     "typing-extensions>=4.4.0",
+    # zxcvbn password strength estimator (MIT). 4.5.0 supports py 3.8-3.13.
+    "zxcvbn>=4.5.0",
     # Zstandard compression inside MORGUL payloads (BSD).
     "zstandard>=0.22.0",
 ]

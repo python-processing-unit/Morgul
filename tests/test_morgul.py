@@ -14,7 +14,14 @@ from morgul.format import (
     unpack,
 )
 from morgul.highlight import highlight_ranges, spans_in_line
+from morgul.history import EditHistory
 from morgul.render import to_html
+from morgul.session import (
+    TabPayload,
+    blob_is_encrypted,
+    decode_tab_blob,
+    encode_tab_blob,
+)
 from morgul.syncmap import preview_pos_to_source, source_pos_to_preview
 
 
@@ -228,3 +235,48 @@ def test_morgul_format_table_has_rev0() -> None:
     cfg = FORMATS[CURRENT_VERSION]
     assert cfg.nonce_len == 24
     assert cfg.argon2_hash_len == 32
+
+
+def test_edit_history_undo_redo_round_trip() -> None:
+    hist = EditHistory()
+    hist.seed("a", 1)
+    hist.record("ab", 2)
+    hist.record("abc", 3)
+    assert hist.undo_step() is not None
+    assert hist.current.text == "ab"
+    assert hist.redo_step() is not None
+    assert hist.current.text == "abc"
+    data = hist.to_dict()
+    restored = EditHistory.from_dict(data)
+    assert restored.current.text == "abc"
+    assert [f.text for f in restored.undo] == ["a", "ab"]
+
+
+def test_session_tab_blob_plain_and_encrypted() -> None:
+    hist = EditHistory()
+    hist.seed("note")
+    hist.record("note!", 5)
+    payload = TabPayload(
+        history=hist,
+        path=r"C:\docs\x.md",
+        dirty=True,
+        wrap_on=False,
+        preview_on=True,
+        scroll=12,
+    )
+    plain = encode_tab_blob(payload, None)
+    assert not blob_is_encrypted(plain)
+    back = decode_tab_blob(plain, None)
+    assert back.history.current.text == "note!"
+    assert back.history.undo[0].text == "note"
+    assert back.path == r"C:\docs\x.md"
+    assert back.dirty is True
+    assert back.wrap_on is False
+    assert back.scroll == 12
+
+    enc = encode_tab_blob(payload, "s3cret")
+    assert blob_is_encrypted(enc)
+    assert looks_like_morgul(enc)
+    assert decode_tab_blob(enc, "s3cret").history.current.text == "note!"
+    with pytest.raises(MorgulFormatError):
+        decode_tab_blob(enc, "wrong")

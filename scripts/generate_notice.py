@@ -15,6 +15,11 @@ VENV_SITE_PACKAGES = REPO_ROOT / ".venv" / "Lib" / "site-packages"
 NOTICE_FILE = REPO_ROOT / "NOTICE.md"
 PROJECT_LICENSE = REPO_ROOT / "UNLICENSE"
 
+_LICENSE_PATTERN = re.compile(
+    r"^(LICENSE|COPYING|NOTICE|LICENSE\..+|LicenseRef.+)$",
+    re.IGNORECASE,
+)
+
 
 def parse_uv_lock(path: Path) -> dict[str, dict[str, Any]]:
     """Return package-name -> package-table from uv.lock."""
@@ -29,7 +34,11 @@ def parse_uv_lock(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def find_license_files(package_name: str, version: str) -> list[Path]:
-    """Locate license/copyright files inside the installed package."""
+    """Locate license/copyright files inside the installed package.
+
+    Returns:
+        Sorted list of license file paths found for the package.
+    """
     base = VENV_SITE_PACKAGES
     candidates: list[Path] = []
 
@@ -51,41 +60,56 @@ def find_license_files(package_name: str, version: str) -> list[Path]:
             # look in a licenses/ sub-directory first
             licenses_dir = candidate / "licenses"
             search_root = licenses_dir if licenses_dir.is_dir() else candidate
-            for f in search_root.rglob("*"):
-                if f.is_file() and re.match(
-                    r"^(LICENSE|COPYING|NOTICE|LICENSE\..+|LicenseRef.+)$", f.name, re.IGNORECASE
-                ):
-                    license_paths.append(f)
+            license_paths.extend(
+                f
+                for f in search_root.rglob("*")
+                if f.is_file() and _LICENSE_PATTERN.match(f.name)
+            )
     return sorted(set(license_paths))
 
 
 def read_text(path: Path) -> str:
+    """Return file contents, replacing undecodable bytes."""
     try:
         return path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except OSError:
         return ""
 
 
 def classify_license(text: str) -> str:
+    """Classify license text into a short SPDX-like identifier.
+
+    Returns:
+        Short SPDX-like identifier string for the detected license.
+    """
     lower = text.lower()
-    if "mit license" in lower or "mit" == lower.strip():
+    if lower.strip() == "mit":
         return "MIT"
-    if "apache license" in lower and "version 2.0" in lower:
-        return "Apache-2.0"
+    rules: list[tuple[str, str]] = [
+        ("mit license", "MIT"),
+        ("apache license", "Apache-2.0"),
+        ("gnu general public license", "GPL"),
+        ("lgpl", "LGPL"),
+        ("unlicense", "Unlicense"),
+        ("psf license", "PSF-2.0"),
+        ("python software foundation", "PSF-2.0"),
+    ]
+    for keyword, identifier in rules:
+        if keyword in lower:
+            return identifier
     if "bsd" in lower and "redistribution" in lower:
         return "BSD"
-    if "gnu general public license" in lower or "gpl" in lower:
+    if "gpl" in lower:
         return "GPL"
-    if "lgpl" in lower:
-        return "LGPL"
-    if "unlicense" in lower:
-        return "Unlicense"
-    if "psf license" in lower or "python software foundation" in lower:
-        return "PSF-2.0"
     return "UNKNOWN"
 
 
 def generate() -> str:
+    """Build the full NOTICE.md content from lock file and license files.
+
+    Returns:
+        The complete NOTICE.md file content as a string.
+    """
     packages = parse_uv_lock(UV_LOCK)
 
     lines: list[str] = [
@@ -102,25 +126,25 @@ def generate() -> str:
     if PROJECT_LICENSE.exists():
         proj_text = read_text(PROJECT_LICENSE).strip()
         if proj_text:
-            lines.append("## morgul (this software)")
-            lines.append("")
-            lines.append("**License:** Unlicense")
-            lines.append("")
-            lines.append("```")
-            lines.append(proj_text)
-            lines.append("```")
-            lines.append("")
+            lines.extend((
+                "## morgul (this software)",
+                "",
+                "**License:** Unlicense",
+                "",
+                "```",
+                proj_text,
+                "```",
+                "",
+            ))
 
     for name, pkg in sorted(packages.items()):
         version = pkg.get("version", "unknown")
         license_paths = find_license_files(name, version)
 
-        lines.append(f"## {name} {version}")
-        lines.append("")
+        lines.extend((f"## {name} {version}", ""))
 
         if not license_paths:
-            lines.append(f"_No license files found for {name}._")
-            lines.append("")
+            lines.extend((f"_No license files found for {name}._", ""))
             continue
 
         seen_texts: set[str] = set()
@@ -131,20 +155,15 @@ def generate() -> str:
             seen_texts.add(text)
 
             license_type = classify_license(text)
-            lines.append(f"**License:** {license_type}")
-            lines.append("")
-            lines.append("```")
-            lines.append(text)
-            lines.append("```")
-            lines.append("")
+            lines.extend((f"**License:** {license_type}", "", "```", text, "```", ""))
 
     return "\n".join(lines)
 
 
 def main() -> None:
+    """Generate NOTICE.md and write it to disk."""
     notice = generate()
     NOTICE_FILE.write_text(notice, encoding="utf-8")
-    print(f"Wrote {NOTICE_FILE}")
 
 
 if __name__ == "__main__":

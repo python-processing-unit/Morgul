@@ -5,6 +5,14 @@ from __future__ import annotations
 import pytest
 
 from morgul.find import FindError, FindOptions, find_all, replace_all, replace_one
+from morgul.format import (
+    CURRENT_VERSION,
+    FORMATS,
+    MorgulFormatError,
+    looks_like_morgul,
+    pack,
+    unpack,
+)
 from morgul.highlight import highlight_ranges, spans_in_line
 from morgul.render import to_html
 from morgul.syncmap import preview_pos_to_source, source_pos_to_preview
@@ -192,3 +200,31 @@ def test_syncmap_trailing_block_break() -> None:
     preview = "*foo\n"
     assert source_pos_to_preview(source, preview, 4) == 4
     assert source_pos_to_preview(source, preview, 0) == 0
+
+
+def test_morgul_pack_unpack_round_trip() -> None:
+    md = "# Hello\n\n**bold** and a table:\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"
+    blob = pack(md, "s3cret-password")
+    assert blob[0] == CURRENT_VERSION
+    assert looks_like_morgul(blob)
+    assert unpack(blob, "s3cret-password") == md
+
+
+def test_morgul_wrong_password() -> None:
+    blob = pack("secret notes", "correct horse")
+    with pytest.raises(MorgulFormatError, match="Incorrect password"):
+        unpack(blob, "wrong battery")
+
+
+def test_morgul_unknown_version() -> None:
+    blob = bytearray(pack("x", "pw"))
+    blob[0] = 0xFF
+    with pytest.raises(MorgulFormatError, match="Unknown MORGUL"):
+        unpack(bytes(blob), "pw")
+
+
+def test_morgul_format_table_has_rev0() -> None:
+    assert CURRENT_VERSION in FORMATS
+    cfg = FORMATS[CURRENT_VERSION]
+    assert cfg.nonce_len == 24
+    assert cfg.argon2_hash_len == 32

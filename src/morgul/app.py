@@ -73,13 +73,25 @@ from morgul.find import (
     replace_all,
     replace_one,
 )
+from morgul.format import (
+    MorgulFormatError,
+    is_morgul_path,
+    looks_like_morgul,
+    pack,
+    unpack,
+)
 from morgul.highlight import highlight_ranges, spans_in_line
 from morgul.icons import close_icon, close_icon_hover, new_tab_icon
+from morgul.password_ui import SetPasswordDialog, UnlockPasswordDialog
 from morgul.render import to_html
 from morgul.syncmap import preview_pos_to_source, source_pos_to_preview
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+class _UserCancelledError(Exception):
+    """User dismissed a required password prompt."""
 
 
 # Dark syntax colours (GitHub-dark adjacent, easy on the eyes).
@@ -147,6 +159,15 @@ QToolButton#tabCloseButton:hover, QToolButton#newTabButton:hover {
 }
 QToolButton#newTabButton {
   margin-left: 2px;
+}
+QToolButton#passwordEyeButton {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  padding: 2px;
+}
+QToolButton#passwordEyeButton:hover {
+  background: #3c3c3c;
 }
 QPushButton {
   background-color: #2d2d2d;
@@ -814,6 +835,7 @@ class EditorTab(QWidget):
         """Build a blank untitled page."""
         super().__init__(parent)
         self.path: Path | None = None
+        self.password: str | None = None  # session key; None = plaintext file
         self.dirty = False
         self.wrap_on = True
         self.preview_on = True
@@ -985,10 +1007,13 @@ class EditorTab(QWidget):
         self._preview_caret.schedule_repaint()
         self._editor_caret.schedule_repaint()
 
-    def load_text(self, text: str, path: Path | None) -> None:
+    def load_text(
+        self, text: str, path: Path | None, *, password: str | None = None
+    ) -> None:
         """Replace contents without leaving a dirty flag behind."""
         self.editor.setPlainText(text)
         self.path = path
+        self.password = password
         self.dirty = False
         self.refresh_preview()
 
@@ -1365,6 +1390,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(
             self._act("Save &As...", QKeySequence.StandardKey.SaveAs, self._save_as)
         )
+        export_menu = file_menu.addMenu("E&xport")
+        export_menu.addAction("Markdown...").triggered.connect(self._export_markdown)
+        export_menu.addAction("HTML...").triggered.connect(self._export_html)
         file_menu.addAction(
             self._act("Close &Tab", QKeySequence.StandardKey.Close, self._close_current)
         )
@@ -1442,6 +1470,11 @@ class MainWindow(QMainWindow):
         self._wrap_action.toggled.connect(lambda on: self._toggle_wrap(checked=on))
         view_menu.addAction(self._wrap_action)
 
+        # Top-level action sits to the right of View (menu-bar "button").
+        self._password_action = QAction("Pass&word", self)
+        self._password_action.triggered.connect(self._set_password)
+        self.menuBar().addAction(self._password_action)
+
     def _act(
         self,
         text: str,
@@ -1461,6 +1494,10 @@ class MainWindow(QMainWindow):
         name = tab.path.name if tab.path is not None else "Untitled"
         mark = "*" if tab.dirty else ""
         self.setWindowTitle(f"{mark}{name} - Morgul")
+        if hasattr(self, "_password_action"):
+            self._password_action.setText(
+                "Pass&word •" if tab.password else "Pass&word"
+            )
 
     def _install_close_button(self, index: int, tab: EditorTab) -> None:
         """Put an SVG X on the tab instead of the platform default mark."""
@@ -1595,12 +1632,24 @@ class MainWindow(QMainWindow):
             self,
             "Open",
             "",
-            "Markdown (*.md *.markdown *.mdown *.txt);;All files (*.*)",
+            "Markdown & Morgul (*.md *.markdown *.mdown *.txt *.morgul);;"
+            "Morgul (*.morgul);;Markdown (*.md *.markdown *.mdown *.txt);;"
+            "All files (*.*)",
         )
         if not path_str:
             return
         path = Path(path_str)
-        # Reuse a blank untitled tab when possible; otherwise open a new one.
+        try:
+            text, password = self._read_document(path)
+        except MorgulFormatError as exc:
+            QMessageBox.warning(self, "Morgul", str(exc))
+            return
+        except OSError as exc:
+            QMessageBox.warning(self, "Morgul", f"Could not open file:\n{exc}")
+            return
+        except _UserCancelledError:
+            return
+
         tab = self.current_tab()
         if (
             tab is not None
@@ -1611,8 +1660,39 @@ class MainWindow(QMainWindow):
             target = tab
         else:
             target = self._new_tab()
-        target.load_text(path.read_text(encoding="utf-8"), path=path)
+        target.load_text(text, path=path, password=password)
         self.tab_meta_changed()
+
+    def _read_document(self, path: Path) -> tuple[str, str | None]:
+        """Load Markdown or MORGUL from *path*.
+
+        Returns:
+            ``(markdown, password_or_none)``.
+
+        Raises:
+            _UserCancelledError: User aborted the password prompt.
+        """
+        raw = path.read_bytes()
+        encrypted = is_morgul_path(path) or looks_like_morgul(raw)
+        if not encrypted:
+            return raw.decode("utf-8"), None
+
+        dialog = UnlockPasswordDialog(self, filename=path.name)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            raise _UserCancelledError
+        password = dialog.password()
+        if password is None:
+            raise _UserCancelledError
+        return unpack(raw, password), password
+
+    @staticmethod
+    def _write_document(tab: EditorTab, path: Path) -> None:
+        """Write *tab* contents to *path* (MORGUL when a password is set)."""
+        text = tab.editor.toPlainText()
+        if tab.password:
+            path.write_bytes(pack(text, tab.password))
+        else:
+            path.write_text(text, encoding="utf-8", newline="\n")
 
     def _save(self) -> None:
         tab = self.current_tab()
@@ -1621,11 +1701,18 @@ class MainWindow(QMainWindow):
         if tab.path is None:
             self._save_as()
             return
-        tab.path.write_text(
-            tab.editor.toPlainText(),
-            encoding="utf-8",
-            newline="\n",
-        )
+        # Password state must match container type.
+        if tab.password and not is_morgul_path(tab.path):
+            self._save_as()
+            return
+        if not tab.password and is_morgul_path(tab.path):
+            self._save_as()
+            return
+        try:
+            self._write_document(tab, tab.path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Morgul", f"Could not save file:\n{exc}")
+            return
         tab.dirty = False
         self.tab_meta_changed()
 
@@ -1633,16 +1720,112 @@ class MainWindow(QMainWindow):
         tab = self.current_tab()
         if tab is None:
             return
+        if tab.password:
+            default = "Untitled.morgul"
+            if tab.path is not None:
+                default = str(tab.path.with_suffix(".morgul"))
+            filters = "Morgul (*.morgul);;All files (*.*)"
+        else:
+            default = "Untitled.md"
+            if tab.path is not None:
+                default = str(tab.path.with_suffix(".md"))
+            filters = "Markdown (*.md);;All files (*.*)"
         path_str, _ = QFileDialog.getSaveFileName(
             self,
             "Save As",
-            str(tab.path) if tab.path is not None else "Untitled.md",
+            default,
+            filters,
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        if tab.password and path.suffix.lower() != ".morgul":
+            path = path.with_suffix(".morgul")
+        if not tab.password and path.suffix.lower() == ".morgul":
+            path = path.with_suffix(".md")
+        try:
+            self._write_document(tab, path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Morgul", f"Could not save file:\n{exc}")
+            return
+        tab.path = path
+        tab.dirty = False
+        self.tab_meta_changed()
+
+    def _set_password(self) -> None:
+        tab = self.current_tab()
+        if tab is None:
+            return
+        dialog = SetPasswordDialog(self, has_password=bool(tab.password))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.password()
+        if result is None:
+            return
+        tab.password = result or None
+        tab.dirty = True
+        self.tab_meta_changed()
+        # Encourage saving into the matching container type.
+        if tab.password and (tab.path is None or not is_morgul_path(tab.path)):
+            QMessageBox.information(
+                self,
+                "Password",
+                "This document is now encrypted. Use Save As to write a .morgul file.",
+            )
+        elif not tab.password and tab.path is not None and is_morgul_path(tab.path):
+            QMessageBox.information(
+                self,
+                "Password",
+                "Encryption removed. Use Save As to write a plain Markdown file.",
+            )
+
+    def _export_markdown(self) -> None:
+        tab = self.current_tab()
+        if tab is None:
+            return
+        default = "export.md"
+        if tab.path is not None:
+            default = str(tab.path.with_suffix(".md"))
+        path_str, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Markdown",
+            default,
             "Markdown (*.md);;All files (*.*)",
         )
         if not path_str:
             return
-        tab.path = Path(path_str)
-        self._save()
+        try:
+            Path(path_str).write_text(
+                tab.editor.toPlainText(),
+                encoding="utf-8",
+                newline="\n",
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "Morgul", f"Could not export:\n{exc}")
+
+    def _export_html(self) -> None:
+        tab = self.current_tab()
+        if tab is None:
+            return
+        default = "export.html"
+        if tab.path is not None:
+            default = str(tab.path.with_suffix(".html"))
+        path_str, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export HTML",
+            default,
+            "HTML (*.html *.htm);;All files (*.*)",
+        )
+        if not path_str:
+            return
+        try:
+            Path(path_str).write_text(
+                to_html(tab.editor.toPlainText()),
+                encoding="utf-8",
+                newline="\n",
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "Morgul", f"Could not export:\n{exc}")
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:

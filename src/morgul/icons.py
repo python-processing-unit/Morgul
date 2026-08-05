@@ -21,6 +21,24 @@ _PLUS_SVG = """\
 </svg>
 """
 
+_EYE_OPEN_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none">
+  <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8z"
+        stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/>
+</svg>
+"""
+
+_EYE_OFF_SVG = """\
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none">
+  <path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8z"
+        stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+  <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/>
+  <path d="M3 13L13 3" stroke="currentColor" stroke-width="1.4"
+        stroke-linecap="round"/>
+</svg>
+"""
+
 
 def _paint_svg(svg: str, *, colour: str, size: int) -> QIcon:
     """Rasterise *svg* at *size*px with strokes/fills set to *colour*.
@@ -65,3 +83,21 @@ def new_tab_icon(*, size: int = 16) -> QIcon:
         Grey plus icon.
     """
     return _paint_svg(_PLUS_SVG, colour="#c8c8c8", size=size)
+
+
+def eye_open_icon(*, size: int = 16) -> QIcon:
+    """Visible-password (open eye) glyph.
+
+    Returns:
+        Grey open-eye icon.
+    """
+    return _paint_svg(_EYE_OPEN_SVG, colour="#c8c8c8", size=size)
+
+
+def eye_off_icon(*, size: int = 16) -> QIcon:
+    """Hidden-password (slashed eye) glyph.
+
+    Returns:
+        Grey slashed-eye icon.
+    """
+    return _paint_svg(_EYE_OFF_SVG, colour="#c8c8c8", size=size)

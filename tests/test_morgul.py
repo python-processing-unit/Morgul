@@ -61,6 +61,42 @@ def test_to_html_accepts_loose_empty_task_box() -> None:
     assert 'type="checkbox"' not in html
 
 
+def test_to_html_allows_img_tag() -> None:
+    html = to_html('<img src="pic.png" alt="photo">')
+    assert '<img src="pic.png" alt="photo">' in html
+
+
+def test_to_html_allows_br_and_inline_html() -> None:
+    html = to_html("line<br>break")
+    assert "<br>" in html
+    html = to_html("Hello <b>bold</b> and <i>italic</i>")
+    assert "<b>bold</b>" in html
+    assert "<i>italic</i>" in html
+
+
+def test_to_html_tagfilter_blocks_script() -> None:
+    html = to_html("<script>alert(1)</script>")
+    assert "<script>" not in html
+    assert "</script>" not in html
+    # Only `<` is replaced; `>` passes through.
+    assert "&lt;script>alert(1)&lt;/script>" in html
+
+
+def test_to_html_tagfilter_blocks_style_iframe() -> None:
+    # Check body content only (the document head has its own <style>).
+    body = to_html("<style>body{}</style>").split("<body>")[1].split("</body>")[0]
+    assert "<style>" not in body
+    assert "&lt;style>" in body
+    body = to_html("<iframe src=x></iframe>").split("<body>")[1].split("</body>")[0]
+    assert "<iframe" not in body
+    assert "&lt;iframe" in body
+
+
+def test_to_html_renders_strikethrough() -> None:
+    html = to_html("~~deleted~~")
+    assert "<s>deleted</s>" in html
+
+
 def test_heading_span() -> None:
     spans, fence = spans_in_line("# Title", in_fence=False)
     assert fence is False

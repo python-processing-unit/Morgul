@@ -3,7 +3,7 @@ name = "morgul"
 version = "0.1.0"
 description = "Minimal Windows 11 Notepad-style Markdown editor"
 readme = "README.md"
-# App is Unlicense. Runtime deps stay permissive (no GPL/AGPL-only).
+# App is Unlicense. Runtime deps stay permissive (no GPL/AGPL-only, okay for dev deps).
 license = "Unlicense"
 authors = [
     { name = "python-processing-unit", email = "darthmalware@orderofsithlords.onmicrosoft.com" },
@@ -47,6 +47,7 @@ dev = [
     "ruff>=0.9.0",
     # 0.0.50: rules table + `all = "error"` are dependable. requires-python >=3.8.
     "ty>=0.0.50",
+    "pyinstaller>=6.0.0",
 ]
 
 [tool.uv]

@@ -1,32 +1,58 @@
-import importlib.metadata as metadata
+"""Inspect installed package metadata for license information."""
+
+from importlib import metadata
 
 packages = [
-    'argon2-cffi', 'argon2-cffi-bindings', 'cffi', 'pycparser',
-    'markdown-it-py', 'mdurl', 'mdit-py-plugins', 'pynacl',
-    'pyside6-essentials', 'shiboken6', 'typing-extensions', 'zstandard',
-    'zxcvbn', 'pytest', 'colorama', 'iniconfig', 'packaging',
-    'pluggy', 'pygments', 'ruff', 'ty'
+    "argon2-cffi",
+    "argon2-cffi-bindings",
+    "cffi",
+    "pycparser",
+    "markdown-it-py",
+    "mdurl",
+    "mdit-py-plugins",
+    "pynacl",
+    "pyside6-essentials",
+    "shiboken6",
+    "typing-extensions",
+    "zstandard",
+    "zxcvbn",
+    "pytest",
+    "colorama",
+    "iniconfig",
+    "packaging",
+    "pluggy",
+    "pygments",
+    "ruff",
+    "ty",
 ]
 
-for pkg in packages:
-    try:
-        dist = metadata.distribution(pkg)
-        meta = dist.metadata
-        version = meta.get('Version', 'UNKNOWN')
-        license = meta.get('License', 'UNKNOWN')
-        author = meta.get('Author', 'UNKNOWN')
-        home_page = meta.get('Home-page', 'UNKNOWN')
-        summary = meta.get('Summary', 'UNKNOWN')
-        classifiers = meta.get_all('Classifier', []) or []
-        license_classifiers = [c for c in classifiers if 'License' in c]
 
-        print(f'=== {pkg} {version} ===')
-        print(f'License: {license}')
-        print(f'Author: {author}')
-        print(f'Home-page: {home_page}')
-        print(f'Summary: {summary}')
-        for lc in license_classifiers:
-            print(f'  Classifier: {lc}')
-        print()
-    except Exception as e:
-        print(f'{pkg}|ERROR: {e}')
+def _inspect_package(pkg: str) -> None:
+    """Print metadata fields for a single installed package."""
+    dist = metadata.distribution(pkg)
+    meta = dist.metadata
+    _version = meta["Version"] or "UNKNOWN"
+    _lic = meta["License"] or "UNKNOWN"
+    _author = meta["Author"] or "UNKNOWN"
+    _home_page = meta["Home-page"] or "UNKNOWN"
+    _summary = meta["Summary"] or "UNKNOWN"
+    classifiers = meta.get_all("Classifier", []) or []
+    _license_classifiers = [c for c in classifiers if "License" in c]
+
+
+def _is_installed(pkg: str) -> bool:
+    """Return True if the package is installed."""
+    try:
+        metadata.distribution(pkg)
+    except metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def _main() -> None:
+    """Inspect all packages, skipping missing ones."""
+    for pkg in filter(_is_installed, packages):
+        _inspect_package(pkg)
+
+
+_main()

@@ -31,6 +31,7 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPen,
     QResizeEvent,
+    QShowEvent,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -81,9 +82,26 @@ from morgul.format import (
     unpack,
 )
 from morgul.highlight import highlight_ranges, spans_in_line
+from morgul.history import EditFrame, EditHistory
 from morgul.icons import close_icon, close_icon_hover, new_tab_icon
 from morgul.password_ui import SetPasswordDialog, UnlockPasswordDialog
 from morgul.render import to_html
+from morgul.session import (
+    SESSION_VERSION,
+    SessionIndex,
+    TabMeta,
+    TabPayload,
+    blob_is_encrypted,
+    clear_session,
+    decode_tab_blob,
+    encode_tab_blob,
+    load_index,
+    new_tab_id,
+    prune_tab_blobs,
+    read_tab_blob,
+    save_index,
+    write_tab_blob,
+)
 from morgul.syncmap import preview_pos_to_source, source_pos_to_preview
 
 if TYPE_CHECKING:
@@ -283,6 +301,8 @@ class SourceEditor(QPlainTextEdit):
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the editor and its gutter."""
         super().__init__(parent)
+        # Session-persisted undo lives on EditorTab; Qt's stack is not serializable.
+        self.setUndoRedoEnabled(False)
         self._gutter = _LineNumberArea(self)
         self._overlays: list[QTextEdit.ExtraSelection] = []
         self.blockCountChanged.connect(self._update_gutter_width)
@@ -742,6 +762,7 @@ class EditorTabStrip(QWidget):
 
     current_changed = Signal(int)
     new_tab_requested = Signal()
+    tab_bar_clicked = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the strip, plus button, and page stack."""
@@ -753,6 +774,7 @@ class EditorTabStrip(QWidget):
         self._bar.setDocumentMode(True)
         self._bar.currentChanged.connect(self._on_current_changed)
         self._bar.tabMoved.connect(self._on_tab_moved)
+        self._bar.tabBarClicked.connect(self.tab_bar_clicked.emit)
 
         self._new_btn = _SvgToolButton(normal=new_tab_icon(size=16))
         self._new_btn.setObjectName("newTabButton")
@@ -862,6 +884,13 @@ class EditorTab(QWidget):
         self.dirty = False
         self.wrap_on = True
         self.preview_on = True
+        self.session_id = new_tab_id()
+        self.history = EditHistory()
+        # Locked encrypted session tab: blob kept until unlock; never auto-closed.
+        self.locked = False
+        self.locked_blob: bytes | None = None
+        self._applying_history = False
+        self._restore_scroll = 0
 
         self.editor = SourceEditor()
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -893,6 +922,7 @@ class EditorTab(QWidget):
 
         self.editor.textChanged.connect(self._on_text_changed)
         self.editor.cursorPositionChanged.connect(self._sync_preview_caret_from_editor)
+        self.history.seed("")
 
     def dispose(self) -> None:
         """Drop caret filters before Qt deletes nested editor widgets."""
@@ -907,6 +937,8 @@ class EditorTab(QWidget):
             Filename or ``Untitled``, prefixed with ``*`` when dirty.
         """
         name = self.path.name if self.path is not None else "Untitled"
+        if self.locked:
+            name = f"{name} (locked)"
         return f"*{name}" if self.dirty else name
 
     def _sync_preview_caret_from_editor(self) -> None:
@@ -952,11 +984,30 @@ class EditorTab(QWidget):
         self._editor_caret.schedule_repaint()
 
     def _on_text_changed(self) -> None:
+        if not self._applying_history and not self.locked:
+            self.history.record(
+                self.editor.toPlainText(),
+                self.editor.textCursor().position(),
+            )
         if not self.dirty:
             self.dirty = True
             self.meta_changed.emit()
         if self._sync_preview_from_source:
             self._preview_timer.start()
+
+    def apply_history_frame(self, frame: EditFrame) -> None:
+        """Replace editor text/cursor from an undo/redo frame."""
+        self._applying_history = True
+        try:
+            self.editor.setPlainText(frame.text)
+            cursor = self.editor.textCursor()
+            cursor.setPosition(min(max(frame.cursor, 0), len(frame.text)))
+            self.editor.setTextCursor(cursor)
+        finally:
+            self._applying_history = False
+        self.dirty = True
+        self.meta_changed.emit()
+        self.refresh_preview()
 
     def apply_source_edit(self, start: int, end: int, text: str) -> None:
         """Apply a source edit as if it were typed in the Markdown editor.
@@ -1034,11 +1085,87 @@ class EditorTab(QWidget):
         self, text: str, path: Path | None, *, password: str | None = None
     ) -> None:
         """Replace contents without leaving a dirty flag behind."""
-        self.editor.setPlainText(text)
+        self.locked = False
+        self.locked_blob = None
+        self.editor.setReadOnly(False)
+        self.editor.setPlaceholderText("")
+        self._applying_history = True
+        try:
+            self.editor.setPlainText(text)
+        finally:
+            self._applying_history = False
         self.path = path
         self.password = password
         self.dirty = False
+        self.history.seed(text, self.editor.textCursor().position())
         self.refresh_preview()
+
+    def apply_payload(self, payload: TabPayload, *, password: str | None) -> None:
+        """Restore a session payload (text, history, view flags)."""
+        self.locked = False
+        self.locked_blob = None
+        self.editor.setReadOnly(False)
+        self.editor.setPlaceholderText("")
+        self.history = payload.history
+        self.path = Path(payload.path) if payload.path else None
+        self.password = password
+        self.dirty = payload.dirty
+        self.set_wrap(on=payload.wrap_on)
+        self.set_preview(on=payload.preview_on)
+        self._restore_scroll = payload.scroll
+        frame = self.history.current
+        self._applying_history = True
+        try:
+            self.editor.setPlainText(frame.text)
+            cursor = self.editor.textCursor()
+            cursor.setPosition(min(max(frame.cursor, 0), len(frame.text)))
+            self.editor.setTextCursor(cursor)
+        finally:
+            self._applying_history = False
+        self.refresh_preview()
+        QTimer.singleShot(0, self._apply_restore_scroll)
+
+    def _apply_restore_scroll(self) -> None:
+        self.editor.verticalScrollBar().setValue(self._restore_scroll)
+
+    def set_locked(self, blob: bytes, *, path: Path | None, dirty: bool) -> None:
+        """Show a locked encrypted session tab; body stays ciphertext until unlock."""
+        self.locked = True
+        self.locked_blob = blob
+        self.path = path
+        self.password = None
+        self.dirty = dirty
+        self.history.seed("")
+        self._applying_history = True
+        try:
+            self.editor.setPlainText("")
+        finally:
+            self._applying_history = False
+        self.editor.setReadOnly(True)
+        self.editor.setPlaceholderText("Password required — switch here to unlock.")
+        self.preview.setHtml("")
+
+    def to_payload(self) -> TabPayload:
+        """Snapshot unlocked tab state for session write.
+
+        Returns:
+            Serializable tab body including undo/redo history.
+        """
+        # Keep history.current aligned with the live buffer/cursor.
+        text = self.editor.toPlainText()
+        cursor = self.editor.textCursor().position()
+        if text != self.history.current.text:
+            self.history.record(text, cursor)
+        else:
+            self.history.current = EditFrame(text, cursor)
+        return TabPayload(
+            history=self.history,
+            path=str(self.path) if self.path is not None else None,
+            dirty=self.dirty,
+            wrap_on=self.wrap_on,
+            preview_on=self.preview_on,
+            scroll=self.editor.verticalScrollBar().value(),
+        )
 
     def set_wrap(self, *, on: bool) -> None:
         """Toggle word wrap for this tab's editor."""
@@ -1342,13 +1469,17 @@ class MainWindow(QMainWindow):
     """Notepad shell: tab strip, menus, shared find dialog, status bar."""
 
     def __init__(self) -> None:
-        """Build an empty window with one untitled tab."""
+        """Build the window and restore the previous tab session if any."""
         super().__init__()
         self._replace_mode = False
+        self._restoring_session = False
+        # Set when the restored active tab is encrypted; unlock after first show.
+        self._prompt_active_unlock = False
 
         self._tabs = EditorTabStrip()
         self._tabs.new_tab_requested.connect(self._new_tab)
         self._tabs.current_changed.connect(self._on_tab_changed)
+        self._tabs.tab_bar_clicked.connect(self._on_tab_bar_clicked)
         self.setCentralWidget(self._tabs)
 
         self._pos_label = QLabel("Ln 1, Col 1")
@@ -1367,7 +1498,8 @@ class MainWindow(QMainWindow):
         self._preview_action: QAction | None = None
 
         self._build_menus()
-        self._new_tab()
+        if not self._restore_session():
+            self._new_tab()
         self.resize(1000, 680)
         self._set_title()
 
@@ -1536,16 +1668,17 @@ class MainWindow(QMainWindow):
         btn.clicked.connect(lambda: self._close_tab_widget(tab))
         self._tabs.set_tab_close_button(index, btn)
 
-    def _new_tab(self) -> EditorTab:
+    def _new_tab(self, *_args: object, select: bool = True) -> EditorTab:
         tab = EditorTab()
         tab.editor.cursorPositionChanged.connect(self._update_status)
         tab.meta_changed.connect(self.tab_meta_changed)
         index = self._tabs.add_tab(tab, tab.tab_label())
         self._install_close_button(index, tab)
-        self._tabs.set_current_index(index)
-        tab.editor.setFocus()
-        self._set_title()
-        self._update_status()
+        if select:
+            self._tabs.set_current_index(index)
+            tab.editor.setFocus()
+            self._set_title()
+            self._update_status()
         return tab
 
     def _close_tab_widget(self, tab: EditorTab) -> None:
@@ -1555,9 +1688,23 @@ class MainWindow(QMainWindow):
             self._close_tab_at(index)
 
     def _on_tab_changed(self, _index: int) -> None:
+        if self._restoring_session:
+            return
         tab = self.current_tab()
         if tab is None:
             return
+        self._sync_view_for_tab(tab)
+
+    def _on_tab_bar_clicked(self, index: int) -> None:
+        """Prompt for password only when the user opens that tab."""
+        if self._restoring_session:
+            return
+        widget = self._tabs.widget(index)
+        if isinstance(widget, EditorTab) and widget.locked:
+            self._try_unlock_tab(widget)
+            self._sync_view_for_tab(widget)
+
+    def _sync_view_for_tab(self, tab: EditorTab) -> None:
         if self._wrap_action is not None:
             with QSignalBlocker(self._wrap_action):
                 self._wrap_action.setChecked(tab.wrap_on)
@@ -1566,7 +1713,32 @@ class MainWindow(QMainWindow):
                 self._preview_action.setChecked(tab.preview_on)
         self._set_title()
         self._update_status()
+        index = self._tabs.index_of(tab)
+        if index >= 0:
+            self._tabs.set_tab_text(index, tab.tab_label())
         tab.editor.setFocus()
+
+    def _try_unlock_tab(self, tab: EditorTab) -> None:
+        """Prompt for password and decrypt a locked session tab in place.
+
+        Failures leave the tab open and locked so the user can switch away.
+        """
+        if not tab.locked or tab.locked_blob is None:
+            return
+        name = tab.path.name if tab.path is not None else "Untitled"
+        dialog = UnlockPasswordDialog(self, filename=name)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        password = dialog.password()
+        if password is None:
+            return
+        try:
+            payload = decode_tab_blob(tab.locked_blob, password)
+        except (MorgulFormatError, ValueError) as exc:
+            QMessageBox.warning(self, "Morgul", str(exc))
+            return
+        tab.apply_payload(payload, password=password)
+        self.tab_meta_changed()
 
     def _update_status(self) -> None:
         tab = self.current_tab()
@@ -1582,42 +1754,181 @@ class MainWindow(QMainWindow):
 
     def _toggle_preview(self, *, checked: bool) -> None:
         tab = self.current_tab()
-        if tab is not None:
+        if tab is not None and not tab.locked:
             tab.set_preview(on=checked)
 
     def _toggle_wrap(self, *, checked: bool) -> None:
         tab = self.current_tab()
-        if tab is not None:
+        if tab is not None and not tab.locked:
             tab.set_wrap(on=checked)
 
     def _undo(self) -> None:
         tab = self.current_tab()
-        if tab is not None:
-            tab.editor.undo()
+        if tab is None or tab.locked:
+            return
+        frame = tab.history.undo_step()
+        if frame is not None:
+            tab.apply_history_frame(frame)
 
     def _redo(self) -> None:
         tab = self.current_tab()
-        if tab is not None:
-            tab.editor.redo()
+        if tab is None or tab.locked:
+            return
+        frame = tab.history.redo_step()
+        if frame is not None:
+            tab.apply_history_frame(frame)
+
+    def _restore_session(self) -> bool:
+        """Reload tabs from ``~/.morgul``.
+
+        Returns:
+            True when at least one tab was restored.
+        """
+        index = load_index()
+        if index is None:
+            return False
+        self._restoring_session = True
+        try:
+            opened = self._load_session_tabs(index)
+        finally:
+            self._restoring_session = False
+        if opened == 0:
+            return False
+        active = max(0, min(index.active, opened - 1))
+        self._tabs.set_current_index(active)
+        self._finish_session_restore()
+        return True
+
+    def _load_session_tabs(self, index: SessionIndex) -> int:
+        """Materialize tabs from *index*; encrypted tabs stay locked.
+
+        Returns:
+            Number of tabs successfully opened.
+        """
+        opened = 0
+        for meta in index.tabs:
+            blob = read_tab_blob(meta.id)
+            if blob is None:
+                continue
+            tab = self._new_tab(select=False)
+            tab.session_id = meta.id
+            path = Path(meta.path) if meta.path else None
+            if meta.encrypted or blob_is_encrypted(blob):
+                tab.set_locked(blob, path=path, dirty=meta.dirty)
+                tab.set_wrap(on=meta.wrap_on)
+                tab.set_preview(on=meta.preview_on)
+            else:
+                try:
+                    payload = decode_tab_blob(blob, None)
+                except ValueError:
+                    self._drop_tab_widget(tab)
+                    continue
+                tab.apply_payload(payload, password=None)
+            self._tabs.set_tab_text(self._tabs.index_of(tab), tab.tab_label())
+            opened += 1
+        return opened
+
+    def _drop_tab_widget(self, tab: EditorTab) -> None:
+        """Remove a half-built tab from the strip without discard prompts."""
+        idx = self._tabs.index_of(tab)
+        if idx >= 0:
+            self._tabs.remove_tab(idx)
+        tab.dispose()
+        tab.deleteLater()
+
+    def _finish_session_restore(self) -> None:
+        """Sync chrome after restore; defer active-tab unlock until after show."""
+        active_tab = self.current_tab()
+        if active_tab is None:
+            return
+        self._prompt_active_unlock = active_tab.locked
+        if self._wrap_action is not None:
+            with QSignalBlocker(self._wrap_action):
+                self._wrap_action.setChecked(active_tab.wrap_on)
+        if self._preview_action is not None:
+            with QSignalBlocker(self._preview_action):
+                self._preview_action.setChecked(active_tab.preview_on)
+        active_tab.editor.setFocus()
+        self._set_title()
+        self._update_status()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        """After the window is on screen, unlock the restored active tab if needed."""
+        super().showEvent(event)
+        if self._prompt_active_unlock:
+            self._prompt_active_unlock = False
+            # Next event-loop tick so the main window paints before the dialog.
+            QTimer.singleShot(0, self._unlock_active_if_locked)
+
+    def _unlock_active_if_locked(self) -> None:
+        """Prompt for the active tab's password (startup path only)."""
+        tab = self.current_tab()
+        if tab is not None and tab.locked:
+            self._try_unlock_tab(tab)
+            self._sync_view_for_tab(tab)
+
+    def _save_session(self) -> None:
+        """Persist all tabs (encrypted bodies use the document password)."""
+        count = self._tabs.count()
+        if count == 0:
+            clear_session()
+            return
+        metas: list[TabMeta] = []
+        keep: set[str] = set()
+        for i in range(count):
+            widget = self._tabs.widget(i)
+            if not isinstance(widget, EditorTab):
+                continue
+            tab = widget
+            keep.add(tab.session_id)
+            path_s = str(tab.path) if tab.path is not None else None
+            if tab.locked and tab.locked_blob is not None:
+                write_tab_blob(tab.session_id, tab.locked_blob)
+                encrypted = True
+            elif tab.password:
+                write_tab_blob(
+                    tab.session_id, encode_tab_blob(tab.to_payload(), tab.password)
+                )
+                encrypted = True
+            else:
+                write_tab_blob(tab.session_id, encode_tab_blob(tab.to_payload(), None))
+                encrypted = False
+            metas.append(
+                TabMeta(
+                    id=tab.session_id,
+                    path=path_s,
+                    encrypted=encrypted,
+                    wrap_on=tab.wrap_on,
+                    preview_on=tab.preview_on,
+                    dirty=tab.dirty,
+                )
+            )
+        if not metas:
+            clear_session()
+            return
+        active = max(0, min(self._tabs.current_index(), len(metas) - 1))
+        save_index(SessionIndex(version=SESSION_VERSION, active=active, tabs=metas))
+        prune_tab_blobs(keep)
 
     def _cut(self) -> None:
         tab = self.current_tab()
-        if tab is not None:
+        if tab is not None and not tab.locked:
             tab.editor.cut()
 
     def _copy(self) -> None:
         tab = self.current_tab()
-        if tab is not None:
+        if tab is not None and not tab.locked:
             tab.editor.copy()
 
     def _paste(self) -> None:
         tab = self.current_tab()
-        if tab is not None:
+        if tab is not None and not tab.locked:
             tab.editor.paste()
 
     def _select_all(self) -> None:
         tab = self.current_tab()
-        if tab is not None:
+        if tab is not None and not tab.locked:
             tab.editor.selectAll()
 
     def _confirm_discard(self, tab: EditorTab) -> bool:
@@ -1643,6 +1954,7 @@ class MainWindow(QMainWindow):
         widget.dispose()
         widget.deleteLater()
         if self._tabs.count() == 0:
+            clear_session()
             self.close()
 
     def _close_current(self) -> None:
@@ -1678,6 +1990,7 @@ class MainWindow(QMainWindow):
             tab is not None
             and tab.path is None
             and not tab.dirty
+            and not tab.locked
             and not tab.editor.toPlainText()
         ):
             target = tab
@@ -1719,7 +2032,7 @@ class MainWindow(QMainWindow):
 
     def _save(self) -> None:
         tab = self.current_tab()
-        if tab is None:
+        if tab is None or tab.locked:
             return
         if tab.path is None:
             self._save_as()
@@ -1741,7 +2054,7 @@ class MainWindow(QMainWindow):
 
     def _save_as(self) -> None:
         tab = self.current_tab()
-        if tab is None:
+        if tab is None or tab.locked:
             return
         if tab.password:
             default = "Untitled.morgul"
@@ -1779,6 +2092,9 @@ class MainWindow(QMainWindow):
         tab = self.current_tab()
         if tab is None:
             return
+        if tab.locked:
+            self._try_unlock_tab(tab)
+            return
         dialog = SetPasswordDialog(self, has_password=bool(tab.password))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1804,7 +2120,7 @@ class MainWindow(QMainWindow):
 
     def _export_markdown(self) -> None:
         tab = self.current_tab()
-        if tab is None:
+        if tab is None or tab.locked:
             return
         default = "export.md"
         if tab.path is not None:
@@ -1828,7 +2144,7 @@ class MainWindow(QMainWindow):
 
     def _export_html(self) -> None:
         tab = self.current_tab()
-        if tab is None:
+        if tab is None or tab.locked:
             return
         default = "export.html"
         if tab.path is not None:
@@ -1852,10 +2168,18 @@ class MainWindow(QMainWindow):
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Confirm every dirty tab before quitting."""
-        for index in range(self._tabs.count()):
-            widget = self._tabs.widget(index)
-            if isinstance(widget, EditorTab) and not self._confirm_discard(widget):
+        """Persist tabs under ``~/.morgul`` (Notepad-style; keeps dirty buffers)."""
+        try:
+            self._save_session()
+        except OSError as exc:
+            answer = QMessageBox.warning(
+                self,
+                "Morgul",
+                f"Could not save session:\n{exc}\n\nQuit anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
         self._find_dialog.close()

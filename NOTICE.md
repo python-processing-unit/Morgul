@@ -471,10 +471,6 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
 OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-## exceptiongroup 1.3.1
-
-_No license files found for exceptiongroup._
-
 ## filelock 3.32.2
 
 **License:** MIT
@@ -1989,10 +1985,6 @@ software do apply.
 For the latest licensing terms and conditions, see https://www.qt.io/terms-conditions.
 For further information use the contact form at https://www.qt.io/contact-us.
 ```
-
-## tomli 2.4.1
-
-_No license files found for tomli._
 
 ## ty 0.0.66
 

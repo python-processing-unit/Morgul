@@ -17,7 +17,7 @@ Minimal Windows 11 Notepad-style **Markdown** editor with optional encryption.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
 
 ## Setup

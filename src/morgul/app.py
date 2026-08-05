@@ -169,6 +169,29 @@ QToolButton#passwordEyeButton {
 QToolButton#passwordEyeButton:hover {
   background: #3c3c3c;
 }
+QLabel#passwordStrengthBar {
+  background: #2d2d2d;
+  border: 1px solid #3c3c3c;
+  border-radius: 2px;
+}
+QLabel#passwordStrengthBar[filled="true"][strength="0"] {
+  background: #c43c3c; border-color: #c43c3c;
+}
+QLabel#passwordStrengthBar[filled="true"][strength="1"] {
+  background: #d98b2b; border-color: #d98b2b;
+}
+QLabel#passwordStrengthBar[filled="true"][strength="2"] {
+  background: #c8c831; border-color: #c8c831;
+}
+QLabel#passwordStrengthBar[filled="true"][strength="3"] {
+  background: #5fa83f; border-color: #5fa83f;
+}
+QLabel#passwordStrengthBar[filled="true"][strength="4"] {
+  background: #2faa5e; border-color: #2faa5e;
+}
+QLabel#passwordWarningLabel {
+  color: #d98b2b;
+}
 QPushButton {
   background-color: #2d2d2d;
   border: 1px solid #3c3c3c;

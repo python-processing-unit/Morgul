@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QSignalBlocker, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -14,7 +14,11 @@ from PySide6.QtGui import (
     QEnterEvent,
     QFont,
     QIcon,
+    QKeyEvent,
     QKeySequence,
+    QMouseEvent,
+    QPainter,
+    QPen,
     QSyntaxHighlighter,
     QTextCharFormat,
     QTextCursor,
@@ -58,9 +62,11 @@ from morgul.find import (
 from morgul.highlight import highlight_ranges, spans_in_line
 from morgul.icons import close_icon, close_icon_hover, new_tab_icon
 from morgul.render import to_html
+from morgul.syncmap import preview_pos_to_source, source_pos_to_preview
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
 
 # Dark syntax colours (GitHub-dark adjacent, easy on the eyes).
 _COLORS: dict[str, str] = {
@@ -176,6 +182,261 @@ def _editor_font() -> QFont:
         font = QFont("Cascadia Mono")
     font.setPointSize(11)
     return font
+
+
+def _doc_end_position(document: QTextDocument) -> int:
+    """Return the caret position at the end of *document*.
+
+    Returns:
+        Position suitable for ``QTextCursor.setPosition`` (not
+        ``characterCount() - 1``, which is often one too early).
+    """
+    cursor = QTextCursor(document)
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    return cursor.position()
+
+
+class _InactiveCaret(QObject):
+    """Draw a solid caret on a text pane even when it does not have focus."""
+
+    def __init__(self, pane: QPlainTextEdit | QTextBrowser) -> None:
+        """Attach to *pane* (source editor or preview)."""
+        super().__init__(pane)
+        self._pane: QPlainTextEdit | QTextBrowser = pane
+        self._enabled = True
+        viewport = pane.viewport()
+        viewport.installEventFilter(self)
+        pane.cursorPositionChanged.connect(self._request_repaint)
+        pane.selectionChanged.connect(self._request_repaint)
+
+    def _request_repaint(self) -> None:
+        self._pane.viewport().update()
+
+    def schedule_repaint(self) -> None:
+        """Repaint after the event loop lays out the document (post-setHtml)."""
+        QTimer.singleShot(0, self._request_repaint)
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """After the viewport paints, draw our caret if the pane is unfocused.
+
+        Returns:
+            True when this filter handled the paint event.
+        """
+        if (
+            not self._enabled
+            or watched is not self._pane.viewport()
+            or event.type() != QEvent.Type.Paint
+        ):
+            return False
+        watched.removeEventFilter(self)
+        QApplication.sendEvent(watched, event)
+        watched.installEventFilter(self)
+        self._paint_caret()
+        return True
+
+    def _paint_caret(self) -> None:
+        pane = self._pane
+        if pane.hasFocus():
+            return
+        cursor = pane.textCursor()
+        if cursor.hasSelection():
+            return
+        rect = pane.cursorRect(cursor)
+        # Reject empty/stale rects (common right after setHtml, before layout).
+        min_caret_height = 2
+        if rect.height() < min_caret_height or rect.width() < 0:
+            return
+        viewport = pane.viewport()
+        if not viewport.rect().intersects(rect.adjusted(-1, 0, 1, 0)):
+            return
+        painter = QPainter(viewport)
+        color = pane.palette().color(pane.foregroundRole())
+        color.setAlpha(230)
+        pen = QPen(color)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        x = rect.x()
+        painter.drawLine(x, rect.y(), x, rect.y() + rect.height() - 1)
+        painter.end()
+
+
+class PreviewPane(QTextBrowser):
+    """Rendered Markdown with a caret; typing edits the source editor."""
+
+    # Movement is applied to the *source* editor, not the rendered plain text.
+    _MOVE_KEYS = frozenset({
+        Qt.Key.Key_Left,
+        Qt.Key.Key_Right,
+        Qt.Key.Key_Up,
+        Qt.Key.Key_Down,
+        Qt.Key.Key_Home,
+        Qt.Key.Key_End,
+        Qt.Key.Key_PageUp,
+        Qt.Key.Key_PageDown,
+    })
+    _MOD_KEYS = frozenset({
+        Qt.Key.Key_Shift,
+        Qt.Key.Key_Control,
+        Qt.Key.Key_Alt,
+        Qt.Key.Key_Meta,
+        Qt.Key.Key_CapsLock,
+        Qt.Key.Key_NumLock,
+    })
+    _PREVIEW_ONLY_KEYS = frozenset({Qt.Key.Key_A, Qt.Key.Key_C, Qt.Key.Key_Insert})
+
+    def __init__(self, tab: EditorTab) -> None:
+        """Bind to the owning *tab* (source editor + refresh)."""
+        super().__init__()
+        self._tab = tab
+        self.setOpenExternalLinks(True)
+        self.setReadOnly(True)
+        self.setUndoRedoEnabled(False)
+        self.setCursorWidth(1)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
+        )
+
+    def _source_range_for_preview_selection(self) -> tuple[int, int]:
+        """Map the current preview selection (or caret) onto source offsets.
+
+        Returns:
+            ``(start, end)`` indices into the Markdown source string.
+        """
+        source = self._tab.editor.toPlainText()
+        plain = self.toPlainText()
+        cursor = self.textCursor()
+        start = preview_pos_to_source(source, plain, cursor.selectionStart())
+        end = preview_pos_to_source(source, plain, cursor.selectionEnd())
+        if end < start:
+            start, end = end, start
+        return start, end
+
+    def _sync_editor_caret(self) -> None:
+        """Copy the mapped preview selection onto the source editor caret."""
+        start, end = self._source_range_for_preview_selection()
+        cursor = self._tab.editor.textCursor()
+        cursor.setPosition(start)
+        if end != start:
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self._tab.editor.setTextCursor(cursor)
+        self._tab.editor.viewport().update()
+
+    def _navigate_in_source(self, event: QKeyEvent) -> None:
+        """Apply a movement key to the source editor, then mirror the caret here."""
+        editor = self._tab.editor
+        # Keep focus on the preview so typing continues here; only the caret moves.
+        QApplication.sendEvent(editor, event)
+        self._tab.mirror_source_caret_to_preview()
+        self.ensureCursorVisible()
+        self.viewport().update()
+        editor.viewport().update()
+
+    def _replace_source(self, start: int, end: int, text: str) -> None:
+        """Replace ``source[start:end]`` with *text* (same as typing in the editor)."""
+        self._tab.apply_source_edit(start, end, text)
+
+    def _edit_from_key(self, key: int, *, ctrl: bool, text: str) -> bool:
+        """Apply a source edit for *key*.
+
+        Uses the **source** caret (kept in sync on click/arrows), not a fresh
+        preview→source remap, so multi-character typing does not drift.
+
+        Returns:
+            True when the key was handled as a source edit.
+        """
+        editor_cursor = self._tab.editor.textCursor()
+        start = editor_cursor.selectionStart()
+        end = editor_cursor.selectionEnd()
+        source = self._tab.editor.toPlainText()
+        action = _preview_key_action(
+            key,
+            ctrl=ctrl,
+            text=text,
+            start=start,
+            end=end,
+            source_len=len(source),
+        )
+        if action is None:
+            return False
+        delete_start, delete_end, replacement, do_cut = action
+        if do_cut and delete_start != delete_end:
+            QApplication.clipboard().setText(source[delete_start:delete_end])
+        if replacement is not None:
+            self._replace_source(delete_start, delete_end, replacement)
+        return True
+
+    @override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """After a click, align the source caret with the preview caret."""
+        super().mouseReleaseEvent(event)
+        self._sync_editor_caret()
+
+    @override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Navigate/edit as if the caret lived in the Markdown source editor."""
+        key = event.key()
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+
+        if key in self._MOD_KEYS:
+            return
+        if ctrl and key in self._PREVIEW_ONLY_KEYS:
+            super().keyPressEvent(event)
+            return
+        if key in self._MOVE_KEYS:
+            # Arrows/Home/End/Page* move by source lines/chars, not rendered text.
+            self._navigate_in_source(event)
+            return
+        if self._edit_from_key(key, ctrl=ctrl, text=event.text()):
+            return
+        super().keyPressEvent(event)
+
+
+def _preview_key_action(  # ruff: ignore[complex-structure, too-many-return-statements, too-many-arguments]
+    key: int,
+    *,
+    ctrl: bool,
+    text: str,
+    start: int,
+    end: int,
+    source_len: int,
+) -> tuple[int, int, str | None, bool] | None:
+    """Translate a preview key into a source edit.
+
+    Returns:
+        ``(del_start, del_end, replacement, cut)`` or ``None`` if the key is
+        not a source edit. ``replacement is None`` means no document change
+        (still handled). ``cut`` means copy the deleted span to the clipboard.
+    """
+    if ctrl and key == Qt.Key.Key_V:
+        return start, end, QApplication.clipboard().text(), False
+    if ctrl and key == Qt.Key.Key_X:
+        if start == end:
+            return start, end, None, False
+        return start, end, "", True
+    if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+        return start, end, "\n", False
+    if key == Qt.Key.Key_Tab:
+        return start, end, "\t", False
+    if key == Qt.Key.Key_Backspace:
+        if start != end:
+            return start, end, "", False
+        if start > 0:
+            return start - 1, start, "", False
+        return start, end, None, False
+    if key == Qt.Key.Key_Delete:
+        if start != end:
+            return start, end, "", False
+        if start < source_len:
+            return start, start + 1, "", False
+        return start, end, None, False
+    if text and not ctrl and text.isprintable():
+        return start, end, text, False
+    return None
 
 
 class _SvgToolButton(QToolButton):
@@ -341,9 +602,9 @@ class EditorTab(QWidget):
         self.editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.editor.setTabStopDistance(32)
         self.editor.setFont(_editor_font())
+        self.editor.setCursorWidth(1)
 
-        self.preview = QTextBrowser()
-        self.preview.setOpenExternalLinks(True)
+        self.preview = PreviewPane(self)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.addWidget(self.editor)
@@ -356,12 +617,17 @@ class EditorTab(QWidget):
 
         # Keep a reference so the highlighter is not GC'd.
         self._highlighter = MarkdownHighlighter(self.editor.document())
+        # Carets stay visible on the unfocused pane too.
+        self._editor_caret = _InactiveCaret(self.editor)
+        self._preview_caret = _InactiveCaret(self.preview)
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(120)
         self._preview_timer.timeout.connect(self.refresh_preview)
+        self._sync_preview_from_source = True
 
         self.editor.textChanged.connect(self._on_text_changed)
+        self.editor.cursorPositionChanged.connect(self._sync_preview_caret_from_editor)
 
     def tab_label(self) -> str:
         """Short name for the tab bar (with dirty star).
@@ -372,16 +638,126 @@ class EditorTab(QWidget):
         name = self.path.name if self.path is not None else "Untitled"
         return f"*{name}" if self.dirty else name
 
+    def _sync_preview_caret_from_editor(self) -> None:
+        """Mirror the source caret into the preview when the editor is driving."""
+        if not self.preview.isVisible() or self.preview.hasFocus():
+            return
+        self.mirror_source_caret_to_preview()
+
+    def mirror_source_caret_to_preview(self) -> None:
+        """Place the preview caret/selection from the source editor caret."""
+        if not self.preview.isVisible():
+            return
+        source = self.editor.toPlainText()
+        plain = self.preview.toPlainText()
+        editor_cursor = self.editor.textCursor()
+        preview_cursor = self.preview.textCursor()
+        # Clamp against the live Qt document end (MoveOperation.End — not
+        # characterCount()-1, which sits one code unit early in QTextBrowser).
+        doc_end = _doc_end_position(self.preview.document())
+
+        def _clamp(pos: int) -> int:
+            return min(max(pos, 0), doc_end)
+
+        if editor_cursor.hasSelection():
+            start = _clamp(
+                source_pos_to_preview(source, plain, editor_cursor.selectionStart())
+            )
+            end = _clamp(
+                source_pos_to_preview(source, plain, editor_cursor.selectionEnd())
+            )
+            preview_cursor.setPosition(start)
+            preview_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        else:
+            pos = _clamp(source_pos_to_preview(source, plain, editor_cursor.position()))
+            preview_cursor.setPosition(pos)
+        with QSignalBlocker(self.preview):
+            self.preview.setTextCursor(preview_cursor)
+        self.preview.ensureCursorVisible()
+        self.preview.viewport().update()
+        self.editor.viewport().update()
+        # Layout finishes after setHtml/setTextCursor returns — repaint caret then.
+        self._preview_caret.schedule_repaint()
+        self._editor_caret.schedule_repaint()
+
     def _on_text_changed(self) -> None:
         if not self.dirty:
             self.dirty = True
             self.meta_changed.emit()
-        self._preview_timer.start()
+        if self._sync_preview_from_source:
+            self._preview_timer.start()
 
-    def refresh_preview(self) -> None:
-        """Push current Markdown into the HTML preview if visible."""
-        if self.preview.isVisible():
-            self.preview.setHtml(to_html(self.editor.toPlainText()))
+    def apply_source_edit(self, start: int, end: int, text: str) -> None:
+        """Apply a source edit as if it were typed in the Markdown editor.
+
+        Used by the preview pane so keystrokes land in the same document.
+        """
+        source = self.editor.toPlainText()
+        start = max(0, min(start, len(source)))
+        end = max(start, min(end, len(source)))
+        cursor = self.editor.textCursor()
+        cursor.beginEditBlock()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertText(text)
+        cursor.endEditBlock()
+        self.editor.setTextCursor(cursor)
+        # Immediate re-render so the caret can follow the edit.
+        self._preview_timer.stop()
+        self.refresh_preview(follow_source_caret=True)
+
+    def refresh_preview(self, *, follow_source_caret: bool = False) -> None:
+        """Push current Markdown into the HTML preview if visible.
+
+        Args:
+            follow_source_caret: Unused (kept for call-site compatibility).
+                The source caret is always the position source of truth.
+        """
+        del follow_source_caret  # source caret always wins
+        if not self.preview.isVisible():
+            return
+        old_scroll = self.preview.verticalScrollBar().value()
+        source = self.editor.toPlainText()
+        source_pos = self.editor.textCursor().position()
+
+        self.preview.setHtml(to_html(source))
+        plain_after = self.preview.toPlainText()
+        new_pos = source_pos_to_preview(source, plain_after, source_pos)
+
+        cursor = self.preview.textCursor()
+        doc_end = _doc_end_position(self.preview.document())
+        cursor.setPosition(min(max(new_pos, 0), doc_end))
+        # Restore selection from the source editor when present.
+        editor_cursor = self.editor.textCursor()
+        if editor_cursor.hasSelection():
+            start = min(
+                max(
+                    source_pos_to_preview(
+                        source, plain_after, editor_cursor.selectionStart()
+                    ),
+                    0,
+                ),
+                doc_end,
+            )
+            end = min(
+                max(
+                    source_pos_to_preview(
+                        source, plain_after, editor_cursor.selectionEnd()
+                    ),
+                    0,
+                ),
+                doc_end,
+            )
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        with QSignalBlocker(self.preview):
+            self.preview.setTextCursor(cursor)
+        self.preview.verticalScrollBar().setValue(old_scroll)
+        self.preview.ensureCursorVisible()
+        self.preview.viewport().update()
+        self.editor.viewport().update()
+        self._preview_caret.schedule_repaint()
+        self._editor_caret.schedule_repaint()
 
     def load_text(self, text: str, path: Path | None) -> None:
         """Replace contents without leaving a dirty flag behind."""

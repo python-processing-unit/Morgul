@@ -1,0 +1,145 @@
+"""Pure-logic tests (no Qt display needed)."""
+
+from __future__ import annotations
+
+import pytest
+
+from morgul.find import FindError, FindOptions, find_all, replace_all, replace_one
+from morgul.highlight import highlight_ranges, spans_in_line
+from morgul.render import to_html
+
+
+def test_to_html_wraps_heading() -> None:
+    html = to_html("# Hello")
+    assert "<h1>" in html
+    assert "Hello" in html
+    assert "<!DOCTYPE html>" in html
+    # Dark preview permanently.
+    assert "#1e1e1e" in html
+
+
+def test_to_html_renders_table() -> None:
+    html = to_html("| a | b |\n| --- | --- |\n| 1 | 2 |\n")
+    assert "<table>" in html
+    assert "<th>" in html
+    assert "<td>" in html
+
+
+def test_to_html_renders_task_lists() -> None:
+    html = to_html("- [x] Done\n- [ ] Todo\n")
+    # Unicode ballot boxes — QTextBrowser strips <input type="checkbox">.
+    assert "\u2611" in html  # ☑
+    assert "\u2610" in html  # ☐
+    assert "Done" in html
+    assert "Todo" in html
+    assert 'type="checkbox"' not in html
+
+
+def test_to_html_accepts_loose_empty_task_box() -> None:
+    # People often type ``[]`` without the GFM-required space.
+    html = to_html("- [] To-do\n")
+    assert "\u2610" in html
+    assert "To-do" in html
+    assert "[]" not in html
+
+    assert 'type="checkbox"' not in html
+
+
+def test_heading_span() -> None:
+    spans, fence = spans_in_line("# Title", in_fence=False)
+    assert fence is False
+    assert any(s.kind == "heading" for s in spans)
+
+
+def test_fence_toggles_state() -> None:
+    open_spans, inside = spans_in_line("```python", in_fence=False)
+    assert inside is True
+    assert open_spans[0].kind == "fence"
+
+    body_spans, still = spans_in_line("x = 1", in_fence=True)
+    assert still is True
+    assert body_spans[0].kind == "code"
+
+    close_spans, after = spans_in_line("```", in_fence=True)
+    assert after is False
+    assert close_spans[0].kind == "fence"
+
+
+def test_inline_code_and_bold() -> None:
+    spans, _ = spans_in_line("use `x` and **bold**", in_fence=False)
+    kinds = {s.kind for s in spans}
+    assert "code" in kinds
+    assert "bold" in kinds
+
+
+def test_find_plain_and_case() -> None:
+    text = "Foo foo FOO"
+    hits = find_all(text, FindOptions("foo"))
+    assert len(hits) == 3
+    hits_cs = find_all(text, FindOptions("foo", case_sensitive=True))
+    assert len(hits_cs) == 1
+    assert text[hits_cs[0].start : hits_cs[0].end] == "foo"
+
+
+def test_find_whole_word() -> None:
+    text = "cat catalog cat"
+    hits = find_all(text, FindOptions("cat", whole_word=True))
+    assert len(hits) == 2
+    assert text[hits[0].start : hits[0].end] == "cat"
+    assert text[hits[1].start : hits[1].end] == "cat"
+
+
+def test_find_regex() -> None:
+    text = "a1 b22 c3"
+    hits = find_all(text, FindOptions(r"\w(\d+)", regex=True))
+    assert len(hits) == 3
+
+
+def test_find_in_selection() -> None:
+    text = "one two one"
+    hits = find_all(
+        text,
+        FindOptions("one", in_selection=True),
+        selection=(4, 11),  # "two one"
+    )
+    assert len(hits) == 1
+    assert hits[0].start == 8
+
+
+def test_find_in_highlight_zones() -> None:
+    text = "# Title\nplain Title\n"
+    zones = highlight_ranges(text)
+    hits = find_all(
+        text,
+        FindOptions("Title", in_highlight=True),
+        highlight_ranges=zones,
+    )
+    # Only the heading line is highlighted for "Title".
+    assert len(hits) == 1
+    assert hits[0].start == text.index("Title")
+
+
+def test_find_bad_regex() -> None:
+    with pytest.raises(FindError):
+        find_all("abc", FindOptions("(", regex=True))
+
+
+def test_replace_all_and_one() -> None:
+    text = "a a a"
+    new, count = replace_all(text, FindOptions("a"), "b")
+    assert new == "b b b"
+    assert count == 3
+    hits = find_all(text, FindOptions("a"))
+    one = replace_one(text, FindOptions("a"), "x", hits[1])
+    assert one == "a x a"
+
+
+def test_replace_regex_groups() -> None:
+    text = "name=Ada"
+    new, count = replace_all(
+        text,
+        FindOptions(r"name=(\w+)", regex=True),
+        r"user=\1",
+    )
+    assert count == 1
+    assert new == "user=Ada"

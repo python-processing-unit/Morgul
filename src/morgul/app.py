@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from shiboken6 import isValid
 from typing_extensions import override
 
 from morgul.find import (
@@ -202,19 +204,43 @@ class _InactiveCaret(QObject):
     def __init__(self, pane: QPlainTextEdit | QTextBrowser) -> None:
         """Attach to *pane* (source editor or preview)."""
         super().__init__(pane)
-        self._pane: QPlainTextEdit | QTextBrowser = pane
+        self._pane: QPlainTextEdit | QTextBrowser | None = pane
+        self._viewport = pane.viewport()
         self._enabled = True
-        viewport = pane.viewport()
-        viewport.installEventFilter(self)
+        self._viewport.installEventFilter(self)
         pane.cursorPositionChanged.connect(self._request_repaint)
         pane.selectionChanged.connect(self._request_repaint)
+        # Tear down before Qt deletes the pane (tab close / last-tab replace).
+        pane.destroyed.connect(self.dispose)
+
+    def dispose(self, *_args: object) -> None:
+        """Remove filters/signals so late paints cannot touch a dead pane."""
+        if not self._enabled and self._pane is None:
+            return
+        self._enabled = False
+        pane = self._pane
+        viewport = self._viewport
+        self._pane = None
+        if pane is not None and isValid(pane):
+            with contextlib.suppress(RuntimeError):
+                pane.cursorPositionChanged.disconnect(self._request_repaint)
+            with contextlib.suppress(RuntimeError):
+                pane.selectionChanged.disconnect(self._request_repaint)
+        if viewport is not None and isValid(viewport):
+            with contextlib.suppress(RuntimeError):
+                viewport.removeEventFilter(self)
 
     def _request_repaint(self) -> None:
-        self._pane.viewport().update()
+        pane = self._pane
+        if not self._enabled or pane is None or not isValid(pane):
+            return
+        with contextlib.suppress(RuntimeError):
+            pane.viewport().update()
 
     def schedule_repaint(self) -> None:
         """Repaint after the event loop lays out the document (post-setHtml)."""
-        QTimer.singleShot(0, self._request_repaint)
+        if self._enabled:
+            QTimer.singleShot(0, self._request_repaint)
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -223,35 +249,49 @@ class _InactiveCaret(QObject):
         Returns:
             True when this filter handled the paint event.
         """
+        pane = self._pane
         if (
             not self._enabled
-            or watched is not self._pane.viewport()
+            or pane is None
+            or not isValid(pane)
             or event.type() != QEvent.Type.Paint
         ):
             return False
+        try:
+            viewport = pane.viewport()
+        except RuntimeError:
+            return False
+        if watched is not viewport:
+            return False
         watched.removeEventFilter(self)
         QApplication.sendEvent(watched, event)
-        watched.installEventFilter(self)
-        self._paint_caret()
+        if self._enabled and isValid(watched):
+            watched.installEventFilter(self)
+            self._paint_caret()
         return True
 
     def _paint_caret(self) -> None:
         pane = self._pane
-        if pane.hasFocus():
+        if pane is None or not isValid(pane):
             return
-        cursor = pane.textCursor()
-        if cursor.hasSelection():
+        try:
+            focused = pane.hasFocus()
+            cursor = pane.textCursor()
+            rect = pane.cursorRect(cursor)
+            viewport = pane.viewport()
+            palette_color = pane.palette().color(pane.foregroundRole())
+        except RuntimeError:
             return
-        rect = pane.cursorRect(cursor)
+        if focused or cursor.hasSelection():
+            return
         # Reject empty/stale rects (common right after setHtml, before layout).
         min_caret_height = 2
         if rect.height() < min_caret_height or rect.width() < 0:
             return
-        viewport = pane.viewport()
         if not viewport.rect().intersects(rect.adjusted(-1, 0, 1, 0)):
             return
         painter = QPainter(viewport)
-        color = pane.palette().color(pane.foregroundRole())
+        color = palette_color
         color.setAlpha(230)
         pen = QPen(color)
         pen.setWidth(1)
@@ -628,6 +668,12 @@ class EditorTab(QWidget):
 
         self.editor.textChanged.connect(self._on_text_changed)
         self.editor.cursorPositionChanged.connect(self._sync_preview_caret_from_editor)
+
+    def dispose(self) -> None:
+        """Drop caret filters before Qt deletes nested editor widgets."""
+        self._preview_timer.stop()
+        self._editor_caret.dispose()
+        self._preview_caret.dispose()
 
     def tab_label(self) -> str:
         """Short name for the tab bar (with dirty star).
@@ -1341,9 +1387,10 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard(widget):
             return
         self._tabs.remove_tab(index)
+        widget.dispose()
         widget.deleteLater()
         if self._tabs.count() == 0:
-            self._new_tab()
+            self.close()
 
     def _close_current(self) -> None:
         index = self._tabs.current_index()

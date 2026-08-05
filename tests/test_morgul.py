@@ -7,6 +7,7 @@ import pytest
 from morgul.find import FindError, FindOptions, find_all, replace_all, replace_one
 from morgul.highlight import highlight_ranges, spans_in_line
 from morgul.render import to_html
+from morgul.syncmap import preview_pos_to_source, source_pos_to_preview
 
 
 def test_to_html_wraps_heading() -> None:
@@ -143,3 +144,51 @@ def test_replace_regex_groups() -> None:
     )
     assert count == 1
     assert new == "user=Ada"
+
+
+def test_syncmap_italics_round_trip() -> None:
+    source = "*italics*"
+    preview = "italics"
+    # Caret after the word in the preview → just before the closing marker.
+    assert preview_pos_to_source(source, preview, len(preview)) == 8
+    # Caret on the first visible letter → that letter in the source.
+    assert preview_pos_to_source(source, preview, 0) == 1
+    # Source caret after the closing star → end of preview.
+    assert source_pos_to_preview(source, preview, 9) == len(preview)
+    # Typing at end of preview inserts before closing ``*``, not after it.
+    at = preview_pos_to_source(source, preview, len(preview))
+    assert source[:at] + "x" + source[at:] == "*italicsx*"
+
+
+def test_syncmap_plain_identity() -> None:
+    source = "hello world"
+    preview = "hello world"
+    for index in range(len(preview) + 1):
+        assert preview_pos_to_source(source, preview, index) == index
+        assert source_pos_to_preview(source, preview, index) == index
+
+
+def test_syncmap_qt_paragraph_separator() -> None:
+    # QTextBrowser.toPlainText() uses U+2029 between blocks.
+    source = "a\nb"
+    preview = "a\u2029b"
+    assert preview_pos_to_source(source, preview, 0) == 0
+    assert preview_pos_to_source(source, preview, 2) == 2
+    assert source_pos_to_preview(source, preview, 2) == 2
+
+
+def test_syncmap_identical_is_identity() -> None:
+    # Incomplete constructs like ``*foo`` render as raw text — carets must match.
+    source = "*foo"
+    preview = "*foo"
+    for index in range(len(source) + 1):
+        assert source_pos_to_preview(source, preview, index) == index
+        assert preview_pos_to_source(source, preview, index) == index
+
+
+def test_syncmap_trailing_block_break() -> None:
+    # Preview plain text often ends with an extra block separator.
+    source = "*foo"
+    preview = "*foo\n"
+    assert source_pos_to_preview(source, preview, 4) == 4
+    assert source_pos_to_preview(source, preview, 0) == 0

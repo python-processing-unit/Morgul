@@ -329,6 +329,42 @@ class SourceEditor(QPlainTextEdit):
             contents.height(),
         )
 
+    def _main_window(self) -> MainWindow | None:
+        win = self.window()
+        return win if isinstance(win, MainWindow) else None
+
+    @override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Type normally, or overtype when replace mode is on (Ins toggles)."""
+        mods = event.modifiers()
+        no_mods = mods in {
+            Qt.KeyboardModifier.NoModifier,
+            Qt.KeyboardModifier.KeypadModifier,
+        }
+        if event.key() == Qt.Key.Key_Insert and no_mods:
+            host = self._main_window()
+            if host is not None:
+                host.toggle_replace_mode()
+            return
+
+        text = event.text()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        host = self._main_window()
+        replace_on = host is not None and host.replace_mode
+        if replace_on and text and text.isprintable() and not ctrl:
+            cursor = self.textCursor()
+            if not cursor.hasSelection() and not cursor.atEnd():
+                # Select the single character under the caret to overtype it.
+                cursor.movePosition(
+                    QTextCursor.MoveOperation.NextCharacter,
+                    QTextCursor.MoveMode.KeepAnchor,
+                )
+                self.setTextCursor(cursor)
+            self.textCursor().insertText(text)
+            return
+
+        super().keyPressEvent(event)
+
 
 class _InactiveCaret(QObject):
     """Draw a solid caret on a text pane even when it does not have focus."""
@@ -455,7 +491,7 @@ class PreviewPane(QTextBrowser):
         Qt.Key.Key_CapsLock,
         Qt.Key.Key_NumLock,
     })
-    _PREVIEW_ONLY_KEYS = frozenset({Qt.Key.Key_A, Qt.Key.Key_C, Qt.Key.Key_Insert})
+    _PREVIEW_ONLY_KEYS = frozenset({Qt.Key.Key_A, Qt.Key.Key_C})
 
     def __init__(self, tab: EditorTab) -> None:
         """Bind to the owning *tab* (source editor + refresh)."""
@@ -525,6 +561,8 @@ class PreviewPane(QTextBrowser):
         start = editor_cursor.selectionStart()
         end = editor_cursor.selectionEnd()
         source = self._tab.editor.toPlainText()
+        host = self.window()
+        replace_on = isinstance(host, MainWindow) and host.replace_mode
         action = _preview_key_action(
             key,
             ctrl=ctrl,
@@ -532,6 +570,7 @@ class PreviewPane(QTextBrowser):
             start=start,
             end=end,
             source_len=len(source),
+            replace_mode=replace_on,
         )
         if action is None:
             return False
@@ -556,6 +595,11 @@ class PreviewPane(QTextBrowser):
 
         if key in self._MOD_KEYS:
             return
+        if key == Qt.Key.Key_Insert and not ctrl:
+            host = self.window()
+            if isinstance(host, MainWindow):
+                host.toggle_replace_mode()
+            return
         if ctrl and key in self._PREVIEW_ONLY_KEYS:
             super().keyPressEvent(event)
             return
@@ -568,7 +612,7 @@ class PreviewPane(QTextBrowser):
         super().keyPressEvent(event)
 
 
-def _preview_key_action(  # ruff: ignore[complex-structure, too-many-return-statements, too-many-arguments]
+def _preview_key_action(  # ruff: ignore[complex-structure, too-many-return-statements, too-many-arguments, too-many-branches]
     key: int,
     *,
     ctrl: bool,
@@ -576,6 +620,7 @@ def _preview_key_action(  # ruff: ignore[complex-structure, too-many-return-stat
     start: int,
     end: int,
     source_len: int,
+    replace_mode: bool = False,
 ) -> tuple[int, int, str | None, bool] | None:
     """Translate a preview key into a source edit.
 
@@ -607,6 +652,9 @@ def _preview_key_action(  # ruff: ignore[complex-structure, too-many-return-stat
             return start, start + 1, "", False
         return start, end, None, False
     if text and not ctrl and text.isprintable():
+        # Overtype: with no selection, consume the next character(s).
+        if replace_mode and start == end and start < source_len:
+            end = min(start + max(1, len(text)), source_len)
         return start, end, text, False
     return None
 
@@ -1248,6 +1296,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         """Build an empty window with one untitled tab."""
         super().__init__()
+        self._replace_mode = False
 
         self._tabs = EditorTabStrip()
         self._tabs.new_tab_requested.connect(self._new_tab)
@@ -1255,7 +1304,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._tabs)
 
         self._pos_label = QLabel("Ln 1, Col 1")
-        self._meta_label = QLabel("UTF-8  |  Markdown")
+        self._meta_label = QLabel("INS  |  UTF-8  |  Markdown")
         status = QStatusBar()
         status.addWidget(self._pos_label, 1)
         right = QWidget()
@@ -1273,6 +1322,16 @@ class MainWindow(QMainWindow):
         self._new_tab()
         self.resize(1000, 680)
         self._set_title()
+
+    @property
+    def replace_mode(self) -> bool:
+        """True when overtype/replace mode is active (Ins toggles)."""
+        return self._replace_mode
+
+    def toggle_replace_mode(self) -> None:
+        """Flip insert/overtype mode and refresh the status bar."""
+        self._replace_mode = not self._replace_mode
+        self._update_status()
 
     def current_tab(self) -> EditorTab | None:
         """Active editor page, or ``None`` if the strip is empty.
@@ -1451,6 +1510,8 @@ class MainWindow(QMainWindow):
 
     def _update_status(self) -> None:
         tab = self.current_tab()
+        mode = "OVR" if self._replace_mode else "INS"
+        self._meta_label.setText(f"{mode}  |  UTF-8  |  Markdown")
         if tab is None:
             self._pos_label.setText("")
             return

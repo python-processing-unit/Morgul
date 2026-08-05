@@ -8,15 +8,32 @@ from __future__ import annotations
 import re
 
 from markdown_it import MarkdownIt
-from mdit_py_plugins.tasklists import tasklists_plugin
+from mdit_py_plugins.gfm import gfm_plugin
 
-# CommonMark + GFM tables + task lists; raw HTML off for untrusted source.
+# GFM preset: tables, strikethrough, autolinks, task lists, footnotes.
+# HTML enabled so <img>, <br>, <b>, etc. pass through; tagfilter blocks
+# the dangerous tags per GFM spec §6.12.
 # ponytail: single shared parser; rebuild if you ever need per-call options.
-_PARSER = (
-    MarkdownIt("commonmark", {"html": False, "linkify": False})
-    .enable("table")
-    .use(tasklists_plugin)
+_PARSER = MarkdownIt("commonmark", {"html": True, "linkify": False}).use(
+    gfm_plugin,
 )
+
+# GFM "Disallowed Raw HTML" tagfilter (spec §6.12).
+# Escapes the opening `<` of dangerous tags; all other HTML passes through.
+_DISALLOWED_TAGS = re.compile(
+    r"<(/?)(title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext)\b",
+    re.IGNORECASE,
+)
+
+
+def _tagfilter(html: str) -> str:
+    """Apply GFM tagfilter: escape disallowed raw HTML tags.
+
+    Returns:
+        HTML with ``<`` replaced by ``&lt;`` for blocked tag names.
+    """
+    return _DISALLOWED_TAGS.sub(r"&lt;\1\2", html)
+
 
 # Loose task syntax people type: ``- [] foo`` (GFM needs a space inside).
 _LOOSE_EMPTY_BOX = re.compile(
@@ -80,6 +97,7 @@ th, td { border: 1px solid #484848; padding: 6px 10px; }
 th { background: #2d2d2d; font-weight: 600; }
 tr:nth-child(even) td { background: #252526; }
 hr { border: none; border-top: 1px solid #484848; }
+img { max-width: 100%; height: auto; }
 /* Hide the default bullet; the ☑/☐ glyph is the marker. */
 ul.contains-task-list { list-style: none; padding-left: 0.35em; }
 ul.contains-task-list > li { margin: 0.15em 0; }
@@ -112,7 +130,8 @@ def to_html(source: str) -> str:
     Returns:
         A self-contained HTML page suitable for ``QTextBrowser.setHtml``.
     """
-    body = _qtify_tasklists(_PARSER.render(_normalize_task_markdown(source)))
+    rendered = _PARSER.render(_normalize_task_markdown(source))
+    body = _qtify_tasklists(_tagfilter(rendered))
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
         f"<style>{_CSS}</style></head><body>{body}</body></html>"

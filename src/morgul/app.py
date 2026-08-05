@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QSize,
     Qt,
     QTimer,
+    QUrl,
     Signal,
 )
 from PySide6.QtGui import (
@@ -24,6 +25,7 @@ from PySide6.QtGui import (
     QEnterEvent,
     QFont,
     QIcon,
+    QImage,
     QKeyEvent,
     QKeySequence,
     QMouseEvent,
@@ -37,6 +39,7 @@ from PySide6.QtGui import (
     QTextCursor,
     QTextDocument,
     QTextFormat,
+    QTextImageFormat,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -573,6 +576,87 @@ class PreviewPane(QTextBrowser):
             | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
         )
 
+    def set_preview_html(self, html: str, *, base_dir: Path | None) -> None:
+        """Load *html* with a file base URL and scale images to the viewport.
+
+        QTextBrowser ignores CSS ``max-width`` / percentage ``width`` on
+        ``<img>``, so large screenshots stay at intrinsic size and look
+        cropped/off-center. After parse, clamp every image to the pane width.
+        """
+        root = (base_dir if base_dir is not None else Path.cwd()).resolve()
+        base = QUrl.fromLocalFile(str(root) + "/")
+        self.document().setBaseUrl(base)
+        self.setHtml(html)
+        self.fit_images()
+
+    def fit_images(self) -> None:
+        """Clamp embedded images to the viewport width (keep aspect ratio)."""
+        doc = self.document()
+        max_w = max(float(self.viewport().width() - 8), 32.0)
+        # Skip no-op format writes when size already matches within half a pixel.
+        eps = 0.5
+        block = doc.begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                if frag.isValid() and frag.charFormat().isImageFormat():
+                    img_fmt = frag.charFormat().toImageFormat()
+                    image = self._image_for_format(img_fmt)
+                    if image is not None and not image.isNull() and image.width() > 0:
+                        iw = float(image.width())
+                        ih = float(image.height())
+                        # Honor explicit pixel widths when they already fit.
+                        cur_w = img_fmt.width()
+                        if cur_w > 0 and cur_w <= max_w:
+                            new_w = cur_w
+                        else:
+                            new_w = min(iw, max_w)
+                        new_h = ih * (new_w / iw)
+                        if (
+                            abs(img_fmt.width() - new_w) >= eps
+                            or abs(img_fmt.height() - new_h) >= eps
+                        ):
+                            img_fmt.setWidth(new_w)
+                            img_fmt.setHeight(new_h)
+                            cur = QTextCursor(doc)
+                            cur.setPosition(frag.position())
+                            cur.setPosition(
+                                frag.position() + frag.length(),
+                                QTextCursor.MoveMode.KeepAnchor,
+                            )
+                            cur.setCharFormat(img_fmt)
+                it += 1
+            block = block.next()
+
+    def _image_for_format(self, img_fmt: QTextImageFormat) -> QImage | None:
+        """Resolve a ``QTextImageFormat`` to a ``QImage`` via base URL or path.
+
+        Returns:
+            The loaded image, or ``None`` when the resource cannot be resolved.
+        """
+        name = img_fmt.name()
+        url = QUrl(name)
+        if url.isRelative():
+            url = self.document().baseUrl().resolved(url)
+        if url.isLocalFile():
+            image = QImage(url.toLocalFile())
+            if not image.isNull():
+                return image
+        res = self.document().resource(
+            QTextDocument.ResourceType.ImageResource,
+            QUrl(name),
+        )
+        if isinstance(res, QImage):
+            return res
+        return None
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Re-fit images when the preview pane width changes."""
+        super().resizeEvent(event)
+        self.fit_images()
+
     def _source_range_for_preview_selection(self) -> tuple[int, int]:
         """Map the current preview selection (or caret) onto source offsets.
 
@@ -1042,7 +1126,8 @@ class EditorTab(QWidget):
         source = self.editor.toPlainText()
         source_pos = self.editor.textCursor().position()
 
-        self.preview.setHtml(to_html(source))
+        base_dir = self.path.parent if self.path is not None else None
+        self.preview.set_preview_html(to_html(source), base_dir=base_dir)
         plain_after = self.preview.toPlainText()
         new_pos = source_pos_to_preview(source, plain_after, source_pos)
 

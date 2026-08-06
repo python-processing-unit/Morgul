@@ -1030,10 +1030,18 @@ class EditorTab(QWidget):
     def tab_label(self) -> str:
         """Short name for the tab bar (with dirty star).
 
+        For a file-backed tab the title is the filename; otherwise it is the
+        first line of the document, truncated to 15 characters (``Untitled``
+        when the document is empty).
+
         Returns:
-            Filename or ``Untitled``, prefixed with ``*`` when dirty.
+            Filename or first-line snippet, prefixed with ``*`` when dirty.
         """
-        name = self.path.name if self.path is not None else "Untitled"
+        if self.path is not None:
+            name = self.path.name
+        else:
+            first = self.editor.toPlainText().splitlines()
+            name = first[0].strip()[:15] if first and first[0].strip() else "Untitled"
         if self.locked:
             name = f"{name} (locked)"
         return f"*{name}" if self.dirty else name
@@ -1088,6 +1096,9 @@ class EditorTab(QWidget):
             )
         if not self.dirty:
             self.dirty = True
+            self.meta_changed.emit()
+        elif self.path is None and not self.locked:
+            # Untitled tab: title reflects the first line, so refresh live.
             self.meta_changed.emit()
         if self._sync_preview_from_source:
             self._preview_timer.start()

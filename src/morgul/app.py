@@ -408,6 +408,21 @@ class SourceEditor(QPlainTextEdit):
             Qt.KeyboardModifier.NoModifier,
             Qt.KeyboardModifier.KeypadModifier,
         }
+        # QPlainTextEdit consumes Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z internally (its
+        # own undo stack is disabled via setUndoRedoEnabled(False)), which would
+        # swallow the app-level Undo/Redo QAction shortcuts. Route them to the
+        # session-persisted history ourselves.
+        host = self._main_window()
+        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        if ctrl and host is not None and event.key() == Qt.Key.Key_Z:
+            if mods & Qt.KeyboardModifier.ShiftModifier:
+                host._redo()  # ruff: ignore[private-member-access]
+            else:
+                host._undo()  # ruff: ignore[private-member-access]
+            return
+        if ctrl and host is not None and event.key() == Qt.Key.Key_Y:
+            host._redo()  # ruff: ignore[private-member-access]
+            return
         if event.key() == Qt.Key.Key_Insert and no_mods:
             host = self._main_window()
             if host is not None:
@@ -415,8 +430,6 @@ class SourceEditor(QPlainTextEdit):
             return
 
         text = event.text()
-        ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
-        host = self._main_window()
         replace_on = host is not None and host.replace_mode
         if replace_on and text and text.isprintable() and not ctrl:
             cursor = self.textCursor()

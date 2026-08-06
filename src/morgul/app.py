@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import xxhash
 from PySide6.QtCore import (
     QEvent,
     QObject,
@@ -983,6 +984,7 @@ class EditorTab(QWidget):
         self.path: Path | None = None
         self.password: str | None = None  # session key; None = plaintext file
         self.dirty = False
+        self._baseline_hash: int = 0
         self.wrap_on = True
         self.preview_on = True
         self.session_id = new_tab_id()
@@ -1030,6 +1032,38 @@ class EditorTab(QWidget):
         self._preview_timer.stop()
         self._editor_caret.dispose()
         self._preview_caret.dispose()
+
+    def _hash_state(self, text: str) -> int:
+        """Hash covering content and encryption state.
+
+        Returns:
+            64-bit xxHash integer.
+        """
+        marker = "\x00P" if self.password else "\x00-"
+        return xxhash.xxh3_64((text + marker).encode("utf-8")).intdigest()
+
+    def _current_hash(self) -> int:
+        """Hash of the current editor content + encryption state.
+
+        Returns:
+            64-bit xxHash integer for the live editor state.
+        """
+        return self._hash_state(self.editor.toPlainText())
+
+    def _set_baseline(self, text: str) -> None:
+        """Record the hash representing the last saved/loaded state."""
+        self._baseline_hash = self._hash_state(text)
+
+    def _sync_dirty_to_hash(self) -> None:
+        """Recompute dirty from hash comparison; emit meta_changed on change."""
+        current = self._current_hash()
+        if current != self._baseline_hash:
+            if not self.dirty:
+                self.dirty = True
+                self.meta_changed.emit()
+        elif self.dirty:
+            self.dirty = False
+            self.meta_changed.emit()
 
     def tab_label(self) -> str:
         """Short name for the tab bar (with dirty star).
@@ -1098,10 +1132,9 @@ class EditorTab(QWidget):
                 self.editor.toPlainText(),
                 self.editor.textCursor().position(),
             )
-        if not self.dirty:
-            self.dirty = True
-            self.meta_changed.emit()
-        elif self.path is None and not self.locked:
+        if not self._applying_history and not self.locked:
+            self._sync_dirty_to_hash()
+        if self.path is None and not self.locked:
             # Untitled tab: title reflects the first line, so refresh live.
             self.meta_changed.emit()
         if self._sync_preview_from_source:
@@ -1117,8 +1150,7 @@ class EditorTab(QWidget):
             self.editor.setTextCursor(cursor)
         finally:
             self._applying_history = False
-        self.dirty = True
-        self.meta_changed.emit()
+        self._sync_dirty_to_hash()
         self.refresh_preview()
 
     def apply_source_edit(self, start: int, end: int, text: str) -> None:
@@ -1202,13 +1234,14 @@ class EditorTab(QWidget):
         self.locked_blob = None
         self.editor.setReadOnly(False)
         self.editor.setPlaceholderText("")
+        self.path = path
+        self.password = password
+        self._set_baseline(text)
         self._applying_history = True
         try:
             self.editor.setPlainText(text)
         finally:
             self._applying_history = False
-        self.path = path
-        self.password = password
         self.dirty = False
         self.history.seed(text, self.editor.textCursor().position())
         self.refresh_preview()
@@ -1223,6 +1256,7 @@ class EditorTab(QWidget):
         self.path = Path(payload.path) if payload.path else None
         self.password = password
         self.dirty = payload.dirty
+        self._set_baseline(self.history.current.text)
         self.set_wrap(on=payload.wrap_on)
         self.set_preview(on=payload.preview_on)
         self._restore_scroll = payload.scroll
@@ -1254,6 +1288,7 @@ class EditorTab(QWidget):
             self.editor.setPlainText("")
         finally:
             self._applying_history = False
+        self._baseline_hash = self._hash_state("")
         self.editor.setReadOnly(True)
         self.editor.setPlaceholderText("Password required — switch here to unlock.")
         self.preview.setHtml("")
@@ -2215,6 +2250,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Morgul", f"Could not save file:\n{exc}")
             return
         self._add_recent(tab.path)
+        tab._set_baseline(tab.editor.toPlainText())  # ruff: ignore[private-member-access]
         tab.dirty = False
         self.tab_meta_changed()
 
@@ -2252,6 +2288,7 @@ class MainWindow(QMainWindow):
             return
         tab.path = path
         self._add_recent(path)
+        tab._set_baseline(tab.editor.toPlainText())  # ruff: ignore[private-member-access]
         tab.dirty = False
         self.tab_meta_changed()
 

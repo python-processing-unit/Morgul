@@ -29,6 +29,8 @@ dependencies = [
     "zxcvbn>=4.5.0",
     # Zstandard compression inside MORGUL payloads (BSD).
     "zstandard>=0.22.0",
+    # Fast non-cryptographic hash for dirty-tracking (MIT).
+    "xxhash>=3.0.0",
 ]
 
 [project.scripts]

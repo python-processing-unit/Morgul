@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import xxhash
 from PySide6.QtCore import (
     QEvent,
+    QMimeData,
     QObject,
+    QPoint,
     QRect,
     QSignalBlocker,
     QSize,
@@ -23,6 +26,9 @@ from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QColor,
+    QContextMenuEvent,
+    QDrag,
+    QDropEvent,
     QEnterEvent,
     QFont,
     QIcon,
@@ -33,6 +39,7 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QPen,
+    QPixmap,
     QResizeEvent,
     QShowEvent,
     QSyntaxHighlighter,
@@ -68,6 +75,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from shiboken6 import isValid
+from spellchecker import SpellChecker
 from typing_extensions import override
 
 from morgul.find import (
@@ -118,6 +126,13 @@ if TYPE_CHECKING:
 
 class _UserCancelledError(Exception):
     """User dismissed a required password prompt."""
+
+
+# MIME type used to drag a tab between windows (carries the tab's session id).
+_TAB_MIME = "application/x-morgul-tab"
+
+# Every open :class:`MainWindow`, used to resolve cross-window tab drops.
+_WINDOWS: list[MainWindow] = []
 
 
 # Dark syntax colours (GitHub-dark adjacent, easy on the eyes).
@@ -303,6 +318,54 @@ class _LineNumberArea(QWidget):
         self._editor.paint_line_numbers(event)
 
 
+class SpellHighlighter(QSyntaxHighlighter):
+    """Underline misspelled English words using pyspellchecker."""
+
+    def __init__(self, parent: QTextDocument) -> None:
+        """Attach to *parent* document."""
+        super().__init__(parent)
+        self._spellchecker = SpellChecker()
+        self._enabled = True
+        self._fmt = QTextCharFormat()
+        self._fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
+        self._fmt.setUnderlineColor(QColor("#ff6b6b"))
+        self._word_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+    def set_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable spell highlighting."""
+        self._enabled = enabled
+
+    @property
+    def is_enabled(self) -> bool:
+        """Whether spell highlighting is currently active."""
+        return self._enabled
+
+    @override
+    def highlightBlock(self, text: str) -> None:
+        if not self._enabled:
+            return
+        for match in self._word_re.finditer(text):
+            word = match.group()
+            if word not in self._spellchecker.word_frequency:
+                self.setFormat(
+                    match.start(),
+                    match.end() - match.start(),
+                    self._fmt,
+                )
+
+    def misspelled_ranges(self, text: str) -> frozenset[tuple[int, int]]:
+        """Return *text*'s misspelled spans as (start, end) word-local offsets.
+
+        Returns:
+            Set of character offsets where *text* is misspelled.
+        """
+        return frozenset(
+            (match.start(), match.end())
+            for match in self._word_re.finditer(text)
+            if match.group() not in self._spellchecker.word_frequency
+        )
+
+
 class SourceEditor(QPlainTextEdit):
     """Markdown source editor with a line-number gutter."""
 
@@ -313,6 +376,15 @@ class SourceEditor(QPlainTextEdit):
         self.setUndoRedoEnabled(False)
         self._gutter = _LineNumberArea(self)
         self._overlays: list[QTextEdit.ExtraSelection] = []
+        self._spell_highlighter = SpellHighlighter(self.document())
+        # 0ms single-shot so the spell rehighlight runs in the *same* event-loop
+        # cycle as the edit. Qt coalesces its repaint with the edit's paint, so
+        # the block's underlines replace in one pass with no flicker gap.
+        self._spell_timer = QTimer(self)
+        self._spell_timer.setSingleShot(True)
+        self._spell_timer.setInterval(0)
+        self._spell_timer.timeout.connect(self._do_spellcheck_rehighlight)
+        self.textChanged.connect(self._on_spellcheck_refresh)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter)
         self.cursorPositionChanged.connect(self._highlight_current_line)
@@ -389,6 +461,32 @@ class SourceEditor(QPlainTextEdit):
         selections.extend(self._overlays)
         self.setExtraSelections(selections)
 
+    def _on_spellcheck_refresh(self) -> None:
+        if self._spell_highlighter.is_enabled:
+            self._spell_timer.start()
+
+    def _do_spellcheck_rehighlight(self) -> None:
+        if not self._spell_highlighter.is_enabled:
+            return
+        # rehighlight() emits textChanged (format-only). Block it so it can't
+        # loop back into _on_spellcheck_refresh nor disturb the preview/history.
+        with QSignalBlocker(self):
+            self._spell_highlighter.rehighlightBlock(self.textCursor().block())
+
+    def _rehighlight_spellcheck(self) -> None:
+        # Full rehighlight for toggle; blocked so it can't loop or disturb the
+        # preview/history. When disabled, highlightBlock() no-ops, clearing the
+        # underlines; when enabled it applies them.
+        with QSignalBlocker(self):
+            self._spell_highlighter.rehighlight()
+
+    def set_spellcheck_enabled(self, *, enabled: bool) -> None:
+        """Enable/disable spell check and refresh the highlighting."""
+        self._spell_highlighter.set_enabled(enabled=enabled)
+        if not enabled:
+            self._spell_timer.stop()
+        self._rehighlight_spellcheck()
+
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
         """Keep the gutter docked to the left of the viewport."""
@@ -449,6 +547,41 @@ class SourceEditor(QPlainTextEdit):
             return
 
         super().keyPressEvent(event)
+
+    @override
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        menu = self.createStandardContextMenu()
+        cursor = self.cursorForPosition(event.pos())
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        word = cursor.selectedText()
+        if (
+            word
+            and hasattr(self, "_spell_highlighter")
+            and self._spell_highlighter._enabled  # ruff: ignore[private-member-access]
+            and word not in self._spell_highlighter._spellchecker.word_frequency  # ruff: ignore[private-member-access]
+        ):
+            suggestions = self._spell_highlighter._spellchecker.candidates(word)  # ruff: ignore[private-member-access]
+            if suggestions:
+                menu.addSeparator()
+                suggestion_menu = menu.addMenu("Spelling Suggestions")
+                for suggestion in sorted(suggestions)[:10]:
+                    action = suggestion_menu.addAction(suggestion)
+                    start = cursor.selectionStart()
+                    end = cursor.selectionEnd()
+                    action.triggered.connect(
+                        lambda _, s=suggestion, start=start, end=end: (
+                            self._replace_word(start, end, s)
+                        )
+                    )
+        menu.exec_(event.globalPos())
+
+    def _replace_word(self, start: int, end: int, new_word: str) -> None:
+        cursor = self.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        cursor.insertText(new_word)
+        self.setTextCursor(cursor)
 
 
 class _InactiveCaret(QObject):
@@ -855,6 +988,97 @@ class _SvgToolButton(QToolButton):
         super().leaveEvent(event)
 
 
+class _DraggableTabBar(QTabBar):
+    """QTabBar that lets a tab be dragged onto itself or another window.
+
+    Within-window reordering and cross-window moves are handled uniformly
+    through Qt's drag-and-drop: the strip resolves the dragged tab's session id
+    and calls back to move/reorder.
+    """
+
+    drag_started = Signal(int)  # index in this bar where a drag should begin
+    drop_requested = Signal(str, int)  # session id, insertion index into this bar
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        """Build a tab bar that participates in cross-window drag and drop."""
+        super().__init__(parent)
+        # We drive reordering/drops ourselves so the same code path serves
+        # both within-window and cross-window moves.
+        self.setMovable(False)
+        self.setAcceptDrops(True)
+        self._press_index = -1
+        self._press_pos = QPoint()
+
+    def _insertion_index_at(self, pos: QPoint) -> int:
+        """Tab index a drop at *pos* should insert before.
+
+        Returns:
+            The index (0..count) before which the tab would land.
+        """
+        for i in range(self.count()):
+            if pos.x() < self.tabRect(i).center().x():
+                return i
+        return self.count()
+
+    @override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Record the tab under the cursor to seed a potential drag."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_index = self.tabAt(event.position().toPoint())
+            self._press_pos = event.position().toPoint()
+        else:
+            self._press_index = -1
+        super().mousePressEvent(event)
+
+    @override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """Start a tab drag once the cursor clears the drag threshold."""
+        point = event.position().toPoint()
+        if (
+            self._press_index >= 0
+            and event.buttons() & Qt.MouseButton.LeftButton
+            and (point - self._press_pos).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            index = self._press_index
+            self._press_index = -1
+            self.drag_started.emit(index)
+            return
+        super().mouseMoveEvent(event)
+
+    @override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """Forget any pending drag on release."""
+        self._press_index = -1
+        super().mouseReleaseEvent(event)
+
+    @override
+    def dragEnterEvent(self, event: QDropEvent) -> None:
+        """Accept tab drags that carry our MIME payload."""
+        if event.mimeData().hasFormat(_TAB_MIME):
+            event.acceptProposedAction()
+
+    @override
+    def dragMoveEvent(self, event: QDropEvent) -> None:
+        """Show a drop indicator and accept the move over a valid insertion."""
+        if event.mimeData().hasFormat(_TAB_MIME):
+            self._insertion_index_at(event.position().toPoint())
+            event.acceptProposedAction()
+
+    @override
+    def dropEvent(self, event: QDropEvent) -> None:
+        """Resolve the dragged tab and hand it to the strip to move/reorder."""
+        mime = event.mimeData()
+        if not mime.hasFormat(_TAB_MIME):
+            event.ignore()
+            return
+        session_id = bytes(mime.data(_TAB_MIME).data()).decode("utf-8")
+        self.drop_requested.emit(
+            session_id, self._insertion_index_at(event.position().toPoint())
+        )
+        event.acceptProposedAction()
+
+
 class EditorTabStrip(QWidget):
     """Tab titles + trailing SVG ``+`` + stacked editor pages.
 
@@ -869,14 +1093,16 @@ class EditorTabStrip(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the strip, plus button, and page stack."""
         super().__init__(parent)
-        self._bar = QTabBar()
+        # Owning MainWindow, set after construction (used for cross-window moves).
+        self.owner: MainWindow | None = None
+        self._bar = _DraggableTabBar()
         self._bar.setExpanding(False)
         self._bar.setDrawBase(False)
-        self._bar.setMovable(True)
         self._bar.setDocumentMode(True)
         self._bar.currentChanged.connect(self._on_current_changed)
-        self._bar.tabMoved.connect(self._on_tab_moved)
         self._bar.tabBarClicked.connect(self.tab_bar_clicked.emit)
+        self._bar.drag_started.connect(self._on_drag_started)
+        self._bar.drop_requested.connect(self._on_drop_requested)
 
         self._new_btn = _SvgToolButton(normal=new_tab_icon(size=16))
         self._new_btn.setObjectName("newTabButton")
@@ -913,13 +1139,76 @@ class EditorTabStrip(QWidget):
             self._stack.setCurrentIndex(index)
         self.current_changed.emit(index)
 
-    def _on_tab_moved(self, from_index: int, to_index: int) -> None:
-        widget = self._stack.widget(from_index)
+    def _on_drag_started(self, index: int) -> None:
+        """Begin a tab drag carrying the tab's session id."""
+        widget = self._stack.widget(index)
+        if not isinstance(widget, EditorTab):
+            return
+        mime = QMimeData()
+        mime.setData(_TAB_MIME, str(widget.session_id).encode("utf-8"))
+        drag = QDrag(self._bar)
+        drag.setMimeData(mime)
+        label = self._bar.tabText(index)
+        pix = QPixmap(self._bar.width(), self._bar.tabRect(index).height())
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        painter.fillRect(pix.rect(), QColor("#252526"))
+        painter.setPen(QColor("#e6e6e6"))
+        painter.drawText(pix.rect(), Qt.AlignmentFlag.AlignCenter, label.strip("*"))
+        painter.end()
+        drag.setPixmap(pix)
+        drag.exec_(Qt.DropAction.MoveAction)
+
+    def _on_drop_requested(self, session_id: str, target_index: int) -> None:
+        """Move/reorder the dragged tab to ``target_index`` in this strip."""
+        source = _strip_for_session(session_id)
+        if source is None:
+            return
+        source_index = source.index_of_session(session_id)
+        if source_index < 0:
+            return
+        if source is self:
+            if source_index != target_index:
+                self._reorder(source_index, target_index)
+            return
+        _move_tab_across_windows(source, source_index, self, target_index)
+
+    def insert_tab(self, index: int, page: QWidget, title: str) -> int:
+        """Insert *page*/*title* at *index* in both the bar and the stack.
+
+        Returns:
+            The index the tab was inserted at.
+        """
+        self._stack.insertWidget(index, page)
+        self._bar.insertTab(index, title)
+        return index
+
+    def index_of_session(self, session_id: str) -> int:
+        """Index of the EditorTab holding *session_id* in this strip.
+
+        Returns:
+            The tab's index, or ``-1`` when absent.
+        """
+        for i in range(self._stack.count()):
+            widget = self._stack.widget(i)
+            if isinstance(widget, EditorTab) and widget.session_id == session_id:
+                return i
+        return -1
+
+    def _reorder(self, source: int, target: int) -> None:
+        """Move the tab at *source* to *target* within this strip."""
+        widget = self._stack.widget(source)
         if widget is None:
             return
+        title = self._bar.tabText(source)
         self._stack.removeWidget(widget)
-        self._stack.insertWidget(to_index, widget)
+        self._bar.removeTab(source)
+        self._stack.insertWidget(target, widget)
+        self._bar.insertTab(target, title)
+        self._bar.setCurrentIndex(self._bar.currentIndex())
         self._stack.setCurrentIndex(self._bar.currentIndex())
+        if self.owner is not None:
+            self.owner._install_close_button(target, cast("EditorTab", widget))  # ruff: ignore[private-member-access]
 
     def add_tab(self, page: QWidget, title: str) -> int:
         """Append *page* and a matching title tab.
@@ -931,12 +1220,17 @@ class EditorTabStrip(QWidget):
         self._bar.addTab(title)
         return index
 
-    def remove_tab(self, index: int) -> None:
-        """Drop the title and page at *index* (does not delete the page)."""
+    def remove_tab(self, index: int) -> QWidget | None:
+        """Drop the title and page at *index* (does not delete the page).
+
+        Returns:
+            The removed page widget, or ``None``.
+        """
         page = self._stack.widget(index)
         if page is not None:
             self._stack.removeWidget(page)
         self._bar.removeTab(index)
+        return page
 
     def set_tab_text(self, index: int, title: str) -> None:
         """Update the title label for *index*."""
@@ -987,6 +1281,7 @@ class EditorTab(QWidget):
         self._baseline_hash: int = 0
         self.wrap_on = True
         self.preview_on = True
+        self.spellcheck_on = True
         self.session_id = new_tab_id()
         self.history = EditHistory()
         # Locked encrypted session tab: blob kept until unlock; never auto-closed.
@@ -1030,6 +1325,7 @@ class EditorTab(QWidget):
     def dispose(self) -> None:
         """Drop caret filters before Qt deletes nested editor widgets."""
         self._preview_timer.stop()
+        self.editor._spell_timer.stop()  # ruff: ignore[private-member-access]
         self._editor_caret.dispose()
         self._preview_caret.dispose()
 
@@ -1259,6 +1555,7 @@ class EditorTab(QWidget):
         self._set_baseline(self.history.current.text)
         self.set_wrap(on=payload.wrap_on)
         self.set_preview(on=payload.preview_on)
+        self.set_spellcheck(on=payload.spellcheck_on)
         self._restore_scroll = payload.scroll
         frame = self.history.current
         self._applying_history = True
@@ -1312,6 +1609,7 @@ class EditorTab(QWidget):
             dirty=self.dirty,
             wrap_on=self.wrap_on,
             preview_on=self.preview_on,
+            spellcheck_on=self.spellcheck_on,
             scroll=self.editor.verticalScrollBar().value(),
         )
 
@@ -1331,6 +1629,11 @@ class EditorTab(QWidget):
         self.preview.setVisible(on)
         if on:
             self.refresh_preview()
+
+    def set_spellcheck(self, *, on: bool) -> None:
+        """Toggle spell checking for this tab's editor."""
+        self.spellcheck_on = on
+        self.editor.set_spellcheck_enabled(enabled=on)
 
     def apply_find_highlights(self, matches: list[Match], current: int) -> None:
         """Paint find hits with ExtraSelections; *current* index is brighter."""
@@ -1616,8 +1919,13 @@ class FindReplaceDialog(QDialog):
 class MainWindow(QMainWindow):
     """Notepad shell: tab strip, menus, shared find dialog, status bar."""
 
-    def __init__(self) -> None:
-        """Build the window and restore the previous tab session if any."""
+    def __init__(self, *, restore_session: bool = True) -> None:
+        """Build the window and, on the primary window, restore any session.
+
+        Args:
+            restore_session: When True (the first window only) reload tabs from
+                ``~/.morgul``. New windows created later start blank instead.
+        """
         super().__init__()
         self._replace_mode = False
         self._restoring_session = False
@@ -1625,6 +1933,7 @@ class MainWindow(QMainWindow):
         self._prompt_active_unlock = False
 
         self._tabs = EditorTabStrip()
+        self._tabs.owner = self
         self._tabs.new_tab_requested.connect(self._new_tab)
         self._tabs.current_changed.connect(self._on_tab_changed)
         self._tabs.tab_bar_clicked.connect(self._on_tab_bar_clicked)
@@ -1647,10 +1956,11 @@ class MainWindow(QMainWindow):
         self._recent = load_recent()
 
         self._build_menus()
-        if not self._restore_session():
+        if not (restore_session and self._restore_session()):
             self._new_tab()
         self.resize(1000, 680)
         self._set_title()
+        _WINDOWS.append(self)
 
     @property
     def replace_mode(self) -> bool:
@@ -1685,6 +1995,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(
             self._act("&New Tab", QKeySequence.StandardKey.New, self._new_tab)
         )
+        file_menu.addAction(self._new_window_action())
         file_menu.addAction(
             self._act("&Open...", QKeySequence.StandardKey.Open, self._open)
         )
@@ -1776,6 +2087,14 @@ class MainWindow(QMainWindow):
         self._wrap_action.toggled.connect(lambda on: self._toggle_wrap(checked=on))
         view_menu.addAction(self._wrap_action)
 
+        self._spellcheck_action = QAction("&Spell check", self)
+        self._spellcheck_action.setCheckable(True)
+        self._spellcheck_action.setChecked(True)
+        self._spellcheck_action.toggled.connect(
+            lambda on: self._toggle_spellcheck(checked=on)
+        )
+        view_menu.addAction(self._spellcheck_action)
+
         # Top-level action sits to the right of View (menu-bar "button").
         self._password_action = QAction("Pass&word", self)
         self._password_action.triggered.connect(self._set_password)
@@ -1819,18 +2138,65 @@ class MainWindow(QMainWindow):
         btn.clicked.connect(lambda: self._close_tab_widget(tab))
         self._tabs.set_tab_close_button(index, btn)
 
+    def _new_window_action(self) -> QAction:
+        """Menu action that opens a second, blank editor window.
+
+        Returns:
+            The action bound to :meth:`_new_window`.
+        """
+        action = QAction("New &Window", self)
+        action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        action.triggered.connect(self._new_window)
+        return action
+
+    def _new_window(self) -> None:
+        """Open a fresh, empty Morgul window offset from this one (drop target)."""
+        win = MainWindow(restore_session=False)
+        pos = self.pos()
+        win.move(pos.x() + 28, pos.y() + 28)
+        win.show()
+
     def _new_tab(self, *_args: object, select: bool = True) -> EditorTab:
         tab = EditorTab()
+        self._attach_tab(tab, select=select)
+        return tab
+
+    def _attach_tab(
+        self,
+        tab: EditorTab,
+        *,
+        index: int | None = None,
+        select: bool = True,
+    ) -> int:
+        """Wire an EditorTab into this window's strip (new or dragged here).
+
+        Connects status/meta signals, installs a close button, and (when
+        *select*) focuses the tab.
+
+        Returns:
+            The tab's index in this strip.
+        """
         tab.editor.cursorPositionChanged.connect(self._update_status)
         tab.meta_changed.connect(self.tab_meta_changed)
-        index = self._tabs.add_tab(tab, tab.tab_label())
+        title = tab.tab_label()
+        if index is None:
+            index = self._tabs.add_tab(tab, title)
+        else:
+            index = self._tabs.insert_tab(index, tab, title)
         self._install_close_button(index, tab)
         if select:
             self._tabs.set_current_index(index)
             tab.editor.setFocus()
             self._set_title()
             self._update_status()
-        return tab
+        return index
+
+    def _detach_tab(self, tab: EditorTab) -> None:
+        """Disconnect this window's signals from *tab* (it is moving away)."""
+        with contextlib.suppress(RuntimeError):
+            tab.editor.cursorPositionChanged.disconnect(self._update_status)
+        with contextlib.suppress(RuntimeError):
+            tab.meta_changed.disconnect(self.tab_meta_changed)
 
     def _close_tab_widget(self, tab: EditorTab) -> None:
         """Close by widget identity so tab indices cannot go stale."""
@@ -1862,6 +2228,9 @@ class MainWindow(QMainWindow):
         if self._preview_action is not None:
             with QSignalBlocker(self._preview_action):
                 self._preview_action.setChecked(tab.preview_on)
+        if self._spellcheck_action is not None:
+            with QSignalBlocker(self._spellcheck_action):
+                self._spellcheck_action.setChecked(tab.spellcheck_on)
         self._set_title()
         self._update_status()
         index = self._tabs.index_of(tab)
@@ -1912,6 +2281,11 @@ class MainWindow(QMainWindow):
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.set_wrap(on=checked)
+
+    def _toggle_spellcheck(self, *, checked: bool) -> None:
+        tab = self.current_tab()
+        if tab is not None and not tab.locked:
+            tab.set_spellcheck(on=checked)
 
     def _undo(self) -> None:
         tab = self.current_tab()
@@ -1968,6 +2342,7 @@ class MainWindow(QMainWindow):
                 tab.set_locked(blob, path=path, dirty=meta.dirty)
                 tab.set_wrap(on=meta.wrap_on)
                 tab.set_preview(on=meta.preview_on)
+                tab.set_spellcheck(on=meta.spellcheck_on)
             else:
                 try:
                     payload = decode_tab_blob(blob, None)
@@ -1999,6 +2374,9 @@ class MainWindow(QMainWindow):
         if self._preview_action is not None:
             with QSignalBlocker(self._preview_action):
                 self._preview_action.setChecked(active_tab.preview_on)
+        if self._spellcheck_action is not None:
+            with QSignalBlocker(self._spellcheck_action):
+                self._spellcheck_action.setChecked(active_tab.spellcheck_on)
         active_tab.editor.setFocus()
         self._set_title()
         self._update_status()
@@ -2052,6 +2430,7 @@ class MainWindow(QMainWindow):
                     encrypted=encrypted,
                     wrap_on=tab.wrap_on,
                     preview_on=tab.preview_on,
+                    spellcheck_on=tab.spellcheck_on,
                     dirty=tab.dirty,
                 )
             )
@@ -2387,7 +2766,54 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         self._find_dialog.close()
+        with contextlib.suppress(ValueError):
+            _WINDOWS.remove(self)
         event.accept()
+
+
+def _strip_for_session(session_id: str) -> EditorTabStrip | None:
+    """Window strip currently holding the tab with *session_id*, if any.
+
+    Returns:
+        The :class:`EditorTabStrip` that owns the tab, or ``None``.
+    """
+    for win in _WINDOWS:
+        if not isValid(win):
+            continue
+        strip = win._tabs  # ruff: ignore[private-member-access]
+        if strip.index_of_session(session_id) >= 0:
+            return strip
+    return None
+
+
+def _move_tab_across_windows(
+    source: EditorTabStrip,
+    source_index: int,
+    target: EditorTabStrip,
+    target_index: int,
+) -> None:
+    """Transfer the tab at *source_index* from *source* to *target*.
+
+    Moves the EditorTab widget, reconnects it to the destination window, and
+    closes *source* when it has no tabs left.
+    """
+    widget = source._stack.widget(source_index)  # ruff: ignore[private-member-access]
+    if not isinstance(widget, EditorTab):
+        return
+    source_window = source.owner
+    if source_window is None or target.owner is None:
+        return
+
+    source.remove_tab(source_index)
+    source_window._detach_tab(widget)  # ruff: ignore[private-member-access]
+    target.owner._attach_tab(  # ruff: ignore[private-member-access]
+        widget, index=target_index, select=True
+    )
+    if source.count() == 0:
+        source_window.close()
+    else:
+        source_window._set_title()  # ruff: ignore[private-member-access]
+        source_window._update_status()  # ruff: ignore[private-member-access]
 
 
 def run() -> None:

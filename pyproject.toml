@@ -31,6 +31,8 @@ dependencies = [
     "zstandard>=0.22.0",
     # Fast non-cryptographic hash for dirty-tracking (MIT).
     "xxhash>=3.0.0",
+    # English spell checking via pyspellchecker (MIT).
+    "pyspellchecker>=0.7.0",
 ]
 
 [project.scripts]

@@ -71,6 +71,7 @@ class TabMeta:
     encrypted: bool
     wrap_on: bool
     preview_on: bool
+    spellcheck_on: bool
     dirty: bool
 
 
@@ -92,6 +93,7 @@ class TabPayload:
     dirty: bool
     wrap_on: bool
     preview_on: bool
+    spellcheck_on: bool = True
     scroll: int = 0
 
     def to_json(self) -> str:
@@ -106,6 +108,7 @@ class TabPayload:
             "dirty": self.dirty,
             "wrap_on": self.wrap_on,
             "preview_on": self.preview_on,
+            "spellcheck_on": self.spellcheck_on,
             "scroll": self.scroll,
             **self.history.to_dict(),
         }
@@ -131,6 +134,7 @@ class TabPayload:
         dirty = bool(data.get("dirty", False))
         wrap_on = bool(data.get("wrap_on", True))
         preview_on = bool(data.get("preview_on", True))
+        spellcheck_on = bool(data.get("spellcheck_on", True))
         raw_scroll = data.get("scroll", 0)
         scroll = raw_scroll if isinstance(raw_scroll, int) else 0
         return cls(
@@ -139,6 +143,7 @@ class TabPayload:
             dirty=dirty,
             wrap_on=wrap_on,
             preview_on=preview_on,
+            spellcheck_on=spellcheck_on,
             scroll=max(0, scroll),
         )
 
@@ -205,6 +210,7 @@ def _parse_meta(item: object) -> TabMeta | None:
         encrypted=bool(item.get("encrypted", False)),
         wrap_on=bool(item.get("wrap_on", True)),
         preview_on=bool(item.get("preview_on", True)),
+        spellcheck_on=bool(item.get("spellcheck_on", True)),
         dirty=bool(item.get("dirty", False)),
     )
 

@@ -1,7 +1,7 @@
 Set-Location $PSScriptRoot
 
 Write-Host -NoNewline 'Building executable...'
-uv run pyinstaller --onefile --windowed ./src/morgul/__main__.py *> $null
+uv run pyinstaller --onefile --windowed --collect-data spellchecker ./src/morgul/__main__.py *> $null
 Write-Host ' done'
 
 Remove-Item ./morgul.exe

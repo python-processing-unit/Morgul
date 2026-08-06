@@ -13,6 +13,9 @@ from morgul.history import EditHistory
 
 SESSION_VERSION = 1
 
+# Max entries remembered in the File → Open Recent list.
+RECENT_LIMIT = 10
+
 
 def session_root() -> Path:
     """Return ``~/.morgul``.
@@ -304,3 +307,48 @@ def clear_session() -> None:
     if root.is_dir():
         for path in root.glob("*.tab"):
             path.unlink(missing_ok=True)
+
+
+def recent_file() -> Path:
+    """Return ``~/.morgul/recent.json``.
+
+    Returns:
+        Path to the Open Recent list file.
+    """
+    return session_root() / "recent.json"
+
+
+def load_recent() -> list[str]:
+    """Read the recent-files list, newest first.
+
+    Returns:
+        Up to :data:`RECENT_LIMIT` file paths, or ``[]`` when missing/invalid.
+    """
+    path = recent_file()
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [s for s in data if isinstance(s, str)][:RECENT_LIMIT]
+
+
+def save_recent(files: list[str]) -> None:
+    """Persist *files* (newest first) to ``~/.morgul/recent.json``."""
+    ensure_session_dirs()
+    path = recent_file()
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(files[:RECENT_LIMIT], ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    tmp.replace(path)
+
+
+def clear_recent() -> None:
+    """Delete the recent-files list."""
+    recent_file().unlink(missing_ok=True)

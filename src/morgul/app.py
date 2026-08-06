@@ -90,19 +90,23 @@ from morgul.icons import close_icon, close_icon_hover, new_tab_icon
 from morgul.password_ui import SetPasswordDialog, UnlockPasswordDialog
 from morgul.render import to_html
 from morgul.session import (
+    RECENT_LIMIT,
     SESSION_VERSION,
     SessionIndex,
     TabMeta,
     TabPayload,
     blob_is_encrypted,
+    clear_recent,
     clear_session,
     decode_tab_blob,
     encode_tab_blob,
     load_index,
+    load_recent,
     new_tab_id,
     prune_tab_blobs,
     read_tab_blob,
     save_index,
+    save_recent,
     write_tab_blob,
 )
 from morgul.syncmap import preview_pos_to_source, source_pos_to_preview
@@ -1605,6 +1609,7 @@ class MainWindow(QMainWindow):
         self._find_dialog = FindReplaceDialog(self)
         self._wrap_action: QAction | None = None
         self._preview_action: QAction | None = None
+        self._recent = load_recent()
 
         self._build_menus()
         if not self._restore_session():
@@ -1648,6 +1653,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction(
             self._act("&Open...", QKeySequence.StandardKey.Open, self._open)
         )
+        self._recent_menu = file_menu.addMenu("Open &Recent")
+        self._rebuild_recent_menu()
         file_menu.addAction(
             self._act("&Save", QKeySequence.StandardKey.Save, self._save)
         )
@@ -2082,7 +2089,10 @@ class MainWindow(QMainWindow):
         )
         if not path_str:
             return
-        path = Path(path_str)
+        self._open_path(Path(path_str))
+
+    def _open_path(self, path: Path) -> None:
+        """Open *path*, falling back to the active blank tab when possible."""
         try:
             text, password = self._read_document(path)
         except MorgulFormatError as exc:
@@ -2106,7 +2116,53 @@ class MainWindow(QMainWindow):
         else:
             target = self._new_tab()
         target.load_text(text, path=path, password=password)
+        self._add_recent(path)
         self.tab_meta_changed()
+
+    def _rebuild_recent_menu(self) -> None:
+        """Repopulate the Open Recent submenu from ``self._recent``."""
+        self._recent_menu.clear()
+        if not self._recent:
+            empty = self._recent_menu.addAction("No recent files")
+            empty.setEnabled(False)
+            return
+        for path_str in self._recent:
+            action = self._recent_menu.addAction(path_str)
+            action.triggered.connect(lambda _=False, p=path_str: self._open_recent(p))
+        self._recent_menu.addSeparator()
+        clear = self._recent_menu.addAction("Clear Recent Files")
+        clear.triggered.connect(self._clear_recent)
+
+    def _add_recent(self, path: Path) -> None:
+        """Push *path* to the front of the recent list and persist it."""
+        entry = str(path)
+        with contextlib.suppress(ValueError):
+            self._recent.remove(entry)
+        self._recent.insert(0, entry)
+        del self._recent[RECENT_LIMIT:]
+        with contextlib.suppress(OSError):
+            save_recent(self._recent)
+        self._rebuild_recent_menu()
+
+    def _clear_recent(self) -> None:
+        """Empty the recent list and its menu."""
+        self._recent.clear()
+        with contextlib.suppress(OSError):
+            clear_recent()
+        self._rebuild_recent_menu()
+
+    def _open_recent(self, path_str: str) -> None:
+        """Open a file chosen from the Open Recent submenu."""
+        path = Path(path_str)
+        if not path.is_file():
+            QMessageBox.warning(self, "Morgul", f"File not found:\n{path}")
+            if path_str in self._recent:
+                self._recent.remove(path_str)
+                with contextlib.suppress(OSError):
+                    save_recent(self._recent)
+                self._rebuild_recent_menu()
+            return
+        self._open_path(path)
 
     def _read_document(self, path: Path) -> tuple[str, str | None]:
         """Load Markdown or MORGUL from *path*.
@@ -2158,6 +2214,7 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "Morgul", f"Could not save file:\n{exc}")
             return
+        self._add_recent(tab.path)
         tab.dirty = False
         self.tab_meta_changed()
 
@@ -2194,6 +2251,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Morgul", f"Could not save file:\n{exc}")
             return
         tab.path = path
+        self._add_recent(path)
         tab.dirty = False
         self.tab_meta_changed()
 

@@ -5,9 +5,7 @@ of its dependencies (direct, dev, and transitive).
 
 Generated from `uv.lock` and installed package license files.
 
-## morgul (this software)
-
-**License:** Unlicense
+## morgul
 
 ```
 ﻿This is free and unencumbered software released into the public domain.
@@ -38,8 +36,6 @@ For more information, please refer to <https://unlicense.org>
 
 ## altgraph 0.17.5
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2004 Istvan Albert unless otherwise noted.
 Copyright (c) 2006-2010 Bob Ippolito
@@ -62,8 +58,6 @@ IN THE SOFTWARE.
 ```
 
 ## argon2-cffi 25.1.0
-
-**License:** MIT
 
 ```
 The MIT License (MIT)
@@ -91,8 +85,6 @@ SOFTWARE.
 
 ## argon2-cffi-bindings 25.1.0
 
-**License:** MIT
-
 ```
 The MIT License (MIT)
 
@@ -118,8 +110,6 @@ SOFTWARE.
 ```
 
 ## cffi 2.1.1
-
-**License:** UNKNOWN
 
 ```
 Except when otherwise stated (look for LICENSE files in directories or
@@ -147,8 +137,6 @@ documentation is licensed as follows:
 
 ## cfgv 3.5.0
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2018 Anthony Sottile
 
@@ -172,8 +160,6 @@ THE SOFTWARE.
 ```
 
 ## colorama 0.4.6
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2010 Jonathan Hartley
@@ -206,8 +192,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## distlib 0.4.3
-
-**License:** GPL
 
 ```
 A. HISTORY OF THE SOFTWARE
@@ -498,8 +482,6 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ## filelock 3.32.2
 
-**License:** MIT
-
 ```
 MIT License
 
@@ -526,8 +508,6 @@ SOFTWARE.
 
 ## identify 2.6.19
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2017 Chris Kuehl, Anthony Sottile
 
@@ -551,8 +531,6 @@ THE SOFTWARE.
 ```
 
 ## iniconfig 2.3.0
-
-**License:** MIT
 
 ```
 The MIT License (MIT)
@@ -584,8 +562,6 @@ _No license files found for macholib._
 
 ## markdown-it-py 4.2.0
 
-**License:** MIT
-
 ```
 MIT License
 
@@ -609,8 +585,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.
@@ -639,8 +613,6 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 ## mdit-py-plugins 0.6.1
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.
 Copyright (c) 2018 jebbs
@@ -668,8 +640,6 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.
 
@@ -694,8 +664,6 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2014-2015 Vitaly Puzrin, Alex Kocharin.
@@ -722,8 +690,6 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2016-2020 ParkSB.
 
@@ -749,8 +715,6 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-**License:** MIT
-
 ```
 MIT License
 
@@ -774,8 +738,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-**License:** MIT
 
 ```
 MIT License
@@ -802,8 +764,6 @@ SOFTWARE.
 ```
 
 ## mdurl 0.1.2
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.
@@ -854,13 +814,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ```
 
-## morgul 0.1.0
-
-_No license files found for morgul._
-
 ## nodeenv 1.10.0
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2011, Eugene Kalinin.
@@ -899,15 +853,11 @@ DAMAGE.
 
 ## packaging 26.3
 
-**License:** UNKNOWN
-
 ```
 This software is made available under the terms of *either* of the licenses
 found in LICENSE.APACHE or LICENSE.BSD. Contributions to this software is made
 under the terms of *both* these licenses.
 ```
-
-**License:** Apache-2.0
 
 ```
 Apache License
@@ -1088,8 +1038,6 @@ Apache License
    END OF TERMS AND CONDITIONS
 ```
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) Donald Stufft and individual contributors.
 All rights reserved.
@@ -1118,8 +1066,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## pefile 2024.8.26
 
-**License:** MIT
-
 ```
 The MIT License (MIT)
 
@@ -1145,8 +1091,6 @@ SOFTWARE.
 ```
 
 ## platformdirs 4.11.0
-
-**License:** MIT
 
 ```
 MIT License
@@ -1174,8 +1118,6 @@ SOFTWARE.
 
 ## pluggy 1.6.0
 
-**License:** MIT
-
 ```
 The MIT License (MIT)
 
@@ -1202,8 +1144,6 @@ SOFTWARE.
 
 ## pre-commit 4.6.1
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2014 pre-commit dev team: Anthony Sottile, Ken Struys
 
@@ -1227,8 +1167,6 @@ THE SOFTWARE.
 ```
 
 ## pycparser 3.0
-
-**License:** UNKNOWN
 
 ```
 pycparser -- A C parser in Python
@@ -1261,8 +1199,6 @@ OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## pygments 2.20.0
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2006-2022 by the respective authors (see AUTHORS file).
@@ -1297,8 +1233,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 _No license files found for pyinstaller._
 
 ## pyinstaller-hooks-contrib 2026.6
-
-**License:** Apache-2.0
 
 ```
 ============================================
@@ -1826,8 +1760,6 @@ Apache License 2.0
 
 ## pynacl 1.6.2
 
-**License:** Apache-2.0
-
 ```
 Apache License
                         Version 2.0, January 2004
@@ -2005,8 +1937,6 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
    of your accepting any such warranty or additional liability.
 ```
 
-**License:** UNKNOWN
-
 ```
 /*
  * ISC License
@@ -2030,8 +1960,6 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
 ## pyside6-essentials 6.11.1
 
-**License:** UNKNOWN
-
 ```
 Licensees holding valid commercial Qt licenses may use this software in
 accordance with the the terms contained in a written agreement between
@@ -2044,8 +1972,6 @@ For further information use the contact form at https://www.qt.io/contact-us.
 ```
 
 ## pyspellchecker 0.9.0
-
-**License:** MIT
 
 ```
 MIT License
@@ -2073,8 +1999,6 @@ SOFTWARE.
 
 ## pytest 9.1.1
 
-**License:** MIT
-
 ```
 The MIT License (MIT)
 
@@ -2101,8 +2025,6 @@ SOFTWARE.
 
 ## python-discovery 1.5.1
 
-**License:** UNKNOWN
-
 ```
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the
@@ -2125,8 +2047,6 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ## pywin32-ctypes 0.2.3
-
-**License:** UNKNOWN
 
 ```
 This software is OSI Certified Open Source Software.
@@ -2161,8 +2081,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## pyyaml 6.0.3
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2017-2021 Ingy döt Net
 Copyright (c) 2006-2016 Kirill Simonov
@@ -2187,8 +2105,6 @@ SOFTWARE.
 ```
 
 ## ruff 0.16.1
-
-**License:** MIT
 
 ```
 MIT License
@@ -2625,8 +2541,6 @@ are:
 
 ## setuptools 83.0.0
 
-**License:** GPL
-
 ```
 GNU LESSER GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
@@ -2795,8 +2709,6 @@ permanent authorization for you to choose that version for the
 Library.
 ```
 
-**License:** UNKNOWN
-
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to
@@ -2816,8 +2728,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ```
-
-**License:** Apache-2.0
 
 ```
 Apache License
@@ -2895,8 +2805,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-**License:** MIT
-
 ```
 MIT License
 
@@ -2918,8 +2826,6 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTI
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-**License:** MIT
-
 ```
 MIT License
 
@@ -2940,8 +2846,6 @@ EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2012 Erik Rose
@@ -2965,15 +2869,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-**License:** UNKNOWN
-
 ```
 This software is made available under the terms of *either* of the licenses
 found in LICENSE.APACHE or LICENSE.BSD. Contributions to this software is made
 under the terms of *both* these licenses.
 ```
-
-**License:** Apache-2.0
 
 ```
 Apache License
@@ -3154,8 +3054,6 @@ Apache License
    END OF TERMS AND CONDITIONS
 ```
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) Donald Stufft and individual contributors.
 All rights reserved.
@@ -3182,8 +3080,6 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-**License:** MIT
-
 ```
 MIT License
 
@@ -3207,8 +3103,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
-
-**License:** MIT
 
 ```
 MIT License
@@ -3234,8 +3128,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-**License:** MIT
-
 ```
 MIT License
 
@@ -3259,8 +3151,6 @@ OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
 ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ```
-
-**License:** GPL
 
 ```
 The code contained in this directory was automatically generated using the
@@ -3703,8 +3593,6 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
       the Mozilla Public License, v. 2.0.
 ```
 
-**License:** UNKNOWN
-
 ```
 The following files include code from opensource projects
 (either as direct copies or modified versions):
@@ -3720,8 +3608,6 @@ The following files include code from opensource projects
 
 ## shiboken6 6.11.1
 
-**License:** UNKNOWN
-
 ```
 Licensees holding valid commercial Qt licenses may use this software in
 accordance with the the terms contained in a written agreement between
@@ -3734,8 +3620,6 @@ For further information use the contact form at https://www.qt.io/contact-us.
 ```
 
 ## ty 0.0.66
-
-**License:** MIT
 
 ```
 MIT License
@@ -3762,8 +3646,6 @@ SOFTWARE.
 ```
 
 ## typing-extensions 4.16.0
-
-**License:** GPL
 
 ```
 A. HISTORY OF THE SOFTWARE
@@ -4049,8 +3931,6 @@ PERFORMANCE OF THIS SOFTWARE.
 
 ## virtualenv 21.7.1
 
-**License:** UNKNOWN
-
 ```
 Copyright (c) 2020-202x The virtualenv developers
 
@@ -4075,8 +3955,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ## xxhash 3.8.1
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2014-2024, Yue Du
@@ -4104,8 +3982,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## zstandard 0.25.0
-
-**License:** UNKNOWN
 
 ```
 Copyright (c) 2016, Gregory Szorc
@@ -4138,8 +4014,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 ## zxcvbn 4.5.0
-
-**License:** MIT
 
 ```
 MIT License

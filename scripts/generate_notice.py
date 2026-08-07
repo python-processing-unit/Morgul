@@ -19,15 +19,6 @@ _LICENSE_PATTERN = re.compile(
     r"^(LICENSE|COPYING|NOTICE|LICENSE\..+|LicenseRef.+)$",
     re.IGNORECASE,
 )
-_LICENSE_RULES = (
-    ("mit license", "MIT"),
-    ("apache license", "Apache-2.0"),
-    ("gnu general public license", "GPL"),
-    ("lgpl", "LGPL"),
-    ("unlicense", "Unlicense"),
-    ("psf license", "PSF-2.0"),
-    ("python software foundation", "PSF-2.0"),
-)
 
 
 def parse_uv_lock(path: Path) -> dict[str, dict[str, Any]]:
@@ -83,25 +74,6 @@ def read_text(path: Path) -> str:
         return ""
 
 
-def classify_license(text: str) -> str:
-    """Classify license text into a short SPDX-like identifier.
-
-    Returns:
-        Short SPDX-like identifier string for the detected license.
-    """
-    lower = text.lower()
-    if lower.strip() == "mit":
-        return "MIT"
-    for keyword, identifier in _LICENSE_RULES:
-        if keyword in lower:
-            return identifier
-    if "bsd" in lower and "redistribution" in lower:
-        return "BSD"
-    if "gpl" in lower:
-        return "GPL"
-    return "UNKNOWN"
-
-
 def generate() -> str:
     """Build the full NOTICE.md content from lock file and license files.
 
@@ -125,9 +97,7 @@ def generate() -> str:
         proj_text = read_text(PROJECT_LICENSE).strip()
         if proj_text:
             lines.extend((
-                "## morgul (this software)",
-                "",
-                "**License:** Unlicense",
+                "## morgul",
                 "",
                 "```",
                 proj_text,
@@ -136,6 +106,8 @@ def generate() -> str:
             ))
 
     for name, pkg in sorted(packages.items()):
+        if name == "morgul":
+            continue
         version = pkg.get("version", "unknown")
         license_paths = find_license_files(name, version)
 
@@ -152,8 +124,7 @@ def generate() -> str:
                 continue
             seen_texts.add(text)
 
-            license_type = classify_license(text)
-            lines.extend((f"**License:** {license_type}", "", "```", text, "```", ""))
+            lines.extend(("```", text, "```", ""))
 
     return "\n".join(lines)
 

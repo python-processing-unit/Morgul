@@ -1195,6 +1195,23 @@ class EditorTabStrip(QWidget):
                 return i
         return -1
 
+    def index_of_path(self, path: Path) -> int:
+        """Index of the EditorTab whose path matches *path*, or ``-1``.
+
+        Returns:
+            The tab's index, or ``-1`` when absent.
+        """
+        resolved = path.resolve()
+        for i in range(self._stack.count()):
+            widget = self._stack.widget(i)
+            if (
+                isinstance(widget, EditorTab)
+                and widget.path is not None
+                and widget.path.resolve() == resolved
+            ):
+                return i
+        return -1
+
     def _reorder(self, source: int, target: int) -> None:
         """Move the tab at *source* to *target* within this strip."""
         widget = self._stack.widget(source)
@@ -2506,7 +2523,12 @@ class MainWindow(QMainWindow):
         self._open_path(Path(path_str))
 
     def _open_path(self, path: Path) -> None:
-        """Open *path*, falling back to the active blank tab when possible."""
+        """Open *path*, switching to an existing tab if already open."""
+        existing = self._tabs.index_of_path(path)
+        if existing >= 0:
+            self._tabs.set_current_index(existing)
+            self._add_recent(path)
+            return
         try:
             text, password = self._read_document(path)
         except MorgulFormatError as exc:
@@ -2832,4 +2854,6 @@ def run() -> None:
     app.setStyleSheet(_DARK_QSS)
     window = MainWindow()
     window.show()
+    if len(sys.argv) > 1:
+        window._open_path(Path(sys.argv[1]))  # ruff: ignore[private-member-access]
     raise SystemExit(app.exec())

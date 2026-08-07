@@ -30,7 +30,10 @@ uv sync
 
 ```bash
 uv run morgul
+uv run morgul <file>
 ```
+
+Passing a single file path opens that file. If the file is already open in a tab, Morgul switches to it; otherwise it opens in a new tab.
 
 ## Develop
 

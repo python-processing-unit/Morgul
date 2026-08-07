@@ -19,17 +19,27 @@ _LICENSE_PATTERN = re.compile(
     r"^(LICENSE|COPYING|NOTICE|LICENSE\..+|LicenseRef.+)$",
     re.IGNORECASE,
 )
+_LICENSE_RULES = (
+    ("mit license", "MIT"),
+    ("apache license", "Apache-2.0"),
+    ("gnu general public license", "GPL"),
+    ("lgpl", "LGPL"),
+    ("unlicense", "Unlicense"),
+    ("psf license", "PSF-2.0"),
+    ("python software foundation", "PSF-2.0"),
+)
 
 
 def parse_uv_lock(path: Path) -> dict[str, dict[str, Any]]:
     """Return package-name -> package-table from uv.lock."""
     with path.open("rb") as fh:
         data = tomllib.load(fh)
+
     packages: dict[str, dict[str, Any]] = {}
-    for pkg in data.get("package", []):
-        name = pkg.get("name", "")
+    for package in data.get("package", []):
+        name = package.get("name", "")
         if name:
-            packages[name] = pkg
+            packages[name] = package
     return packages
 
 
@@ -40,19 +50,16 @@ def find_license_files(package_name: str, version: str) -> list[Path]:
         Sorted list of license file paths found for the package.
     """
     base = VENV_SITE_PACKAGES
-    candidates: list[Path] = []
-
-    # dist-info / wheel-info directories
-    for pattern in [
-        f"{package_name.replace('-', '_')}-{version}*.dist-info",
-        f"{package_name.replace('-', '_')}-{version}*.whl-info",
-    ]:
-        candidates.extend(base.glob(pattern))
+    package_stem = package_name.replace("-", "_")
+    candidates = [
+        *base.glob(f"{package_stem}-{version}*.dist-info"),
+        *base.glob(f"{package_stem}-{version}*.whl-info"),
+    ]
 
     # bare package directory (sometimes used for namespace / single-file pkgs)
-    pkg_dir = base / package_name.replace("-", "_")
-    if pkg_dir.is_dir():
-        candidates.append(pkg_dir)
+    package_dir = base / package_stem
+    if package_dir.is_dir():
+        candidates.append(package_dir)
 
     license_paths: list[Path] = []
     for candidate in candidates:
@@ -85,16 +92,7 @@ def classify_license(text: str) -> str:
     lower = text.lower()
     if lower.strip() == "mit":
         return "MIT"
-    rules: list[tuple[str, str]] = [
-        ("mit license", "MIT"),
-        ("apache license", "Apache-2.0"),
-        ("gnu general public license", "GPL"),
-        ("lgpl", "LGPL"),
-        ("unlicense", "Unlicense"),
-        ("psf license", "PSF-2.0"),
-        ("python software foundation", "PSF-2.0"),
-    ]
-    for keyword, identifier in rules:
+    for keyword, identifier in _LICENSE_RULES:
         if keyword in lower:
             return identifier
     if "bsd" in lower and "redistribution" in lower:
@@ -148,8 +146,8 @@ def generate() -> str:
             continue
 
         seen_texts: set[str] = set()
-        for lpath in license_paths:
-            text = read_text(lpath).strip()
+        for license_path in license_paths:
+            text = read_text(license_path).strip()
             if not text or text in seen_texts:
                 continue
             seen_texts.add(text)

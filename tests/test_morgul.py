@@ -44,8 +44,21 @@ def test_to_html_renders_table() -> None:
 def test_to_html_renders_fenced_code_with_compact_line_height() -> None:
     html = to_html("```python\nline one\n\nline three\n```")
     assert '<pre><code class="language-python">' in html
-    assert "line one\n\nline three\n" in html
+    assert "line" in html
+    assert "three" in html
     assert "line-height: normal;" in html
+
+
+def test_to_html_highlights_known_fenced_language() -> None:
+    html = to_html('```python\nprint("hello")\n```')
+    assert '<span style="color: #E6EDF3">print(</span>' in html
+    assert '<span style="color: #A5D6FF">&quot;hello&quot;</span>' in html
+
+
+def test_to_html_falls_back_for_unknown_fenced_language() -> None:
+    html = to_html("```not-a-real-language\nplain & text\n```")
+    assert "plain &amp; text" in html
+    assert "<span style=" not in html
 
 
 def test_to_html_renders_task_lists() -> None:

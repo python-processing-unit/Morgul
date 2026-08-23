@@ -18,6 +18,8 @@ dependencies = [
     "markdown-it-py>=4.0.0",
     # GFM task lists for markdown-it-py (MIT). 0.4.0 still on py>=3.8.
     "mdit-py-plugins>=0.4.0",
+    # Language-aware fenced-code highlighting (BSD-2-Clause).
+    "pygments>=2.18.0",
     # XChaCha20-Poly1305 AEAD via libsodium (Apache-2.0). 1.5.0+ has IETF XChaCha.
     "pynacl>=1.5.0",
     # Qt widgets only — skip PySide6_Addons. LGPL-3.0 OR GPL (we use LGPL terms).

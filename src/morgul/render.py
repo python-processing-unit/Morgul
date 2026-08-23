@@ -77,6 +77,7 @@ pre {
   padding: 10px 12px;
   overflow-x: auto;
   border-radius: 4px;
+  line-height: normal;
 }
 code { padding: 1px 4px; border-radius: 3px; }
 pre code { padding: 0; background: transparent; }

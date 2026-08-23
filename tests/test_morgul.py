@@ -41,6 +41,13 @@ def test_to_html_renders_table() -> None:
     assert "<td>" in html
 
 
+def test_to_html_renders_fenced_code_with_compact_line_height() -> None:
+    html = to_html("```python\nline one\n\nline three\n```")
+    assert '<pre><code class="language-python">' in html
+    assert "line one\n\nline three\n" in html
+    assert "line-height: normal;" in html
+
+
 def test_to_html_renders_task_lists() -> None:
     html = to_html("- [x] Done\n- [ ] Todo\n")
     # Unicode ballot boxes — QTextBrowser strips <input type="checkbox">.

@@ -46,4 +46,4 @@ uv run pytest
 
 ## License
 
-**Unlicense** (public domain). Runtime GUI toolkit is **PySide6-Essentials** (LGPL-3.0). Markdown parsing is **markdown-it-py** (MIT).
+**Unlicense** (public domain). Runtime GUI toolkit is **PySide6-Essentials** (LGPL-3.0). Markdown parsing is **markdown-it-py** (MIT). See [NOTICE.md](./NOTICE.md) for all dependencies.

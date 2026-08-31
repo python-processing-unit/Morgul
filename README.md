@@ -1,6 +1,6 @@
 # Morgul
 
-Minimal Windows 11 Notepad-style **Markdown** editor with optional encryption.
+Minimal Markdown editor with optional encryption.
 
 <p align="center">
   <img width="100%" alt="Screenshot of Morgul" src="./assets/screenshot.png">
@@ -12,7 +12,7 @@ Minimal Windows 11 Notepad-style **Markdown** editor with optional encryption.
 - Markdown syntax highlighting
 - Live HTML preview pane (`Ctrl+Shift+P`)
 - Find & Replace (`Ctrl+F` / `Ctrl+H`): match case, whole word, regex, in selection, in highlighted zones only
-- Password-protected MORGUL format (XChaCha20-Poly1305 + Argon2id)
+- Encrypted MORGUL format (XChaCha20-Poly1305 + Argon2id)
 - Export: Markdown or HTML (cleartext)
 
 ## Requirements

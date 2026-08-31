@@ -249,11 +249,16 @@ QMessageBox { background-color: #1e1e1e; }
 
 
 class MarkdownHighlighter(QSyntaxHighlighter):
-    """Colour one block at a time; fence state rides on ``previousBlockState``."""
+    """Colour one block at a time; fence state rides on ``previousBlockState``.
 
-    def __init__(self, document: QTextDocument) -> None:
-        """Attach to *document* and build the colour table once."""
+    Spell underlines are merged into the same pass so they cannot replace
+    Markdown colours (Qt allows only one highlighter's formats per block).
+    """
+
+    def __init__(self, document: QTextDocument, spell: SpellHighlighter) -> None:
+        """Attach to *document*; *spell* supplies underlines merged onto colours."""
         super().__init__(document)
+        self._spell = spell
         self._formats = {kind: _make_format(color) for kind, color in _COLORS.items()}
         self._formats["heading"].setFontWeight(QFont.Weight.Bold)
         self._formats["bold"].setFontWeight(QFont.Weight.Bold)
@@ -267,6 +272,23 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         for span in spans:
             self.setFormat(span.start, span.end - span.start, self._formats[span.kind])
         self.setCurrentBlockState(_STATE_FENCE if still_fenced else _STATE_NORMAL)
+        self._apply_spellcheck(text)
+
+    def _apply_spellcheck(self, text: str) -> None:
+        if not self._spell.is_enabled:
+            return
+        underline = self._spell.underline_format
+        for start, end in self._spell.misspelled_ranges(text):
+            index = start
+            while index < end:
+                base = self.format(index)
+                run_end = index + 1
+                while run_end < end and self.format(run_end) == base:
+                    run_end += 1
+                merged = QTextCharFormat(base)
+                merged.merge(underline)
+                self.setFormat(index, run_end - index, merged)
+                index = run_end
 
 
 def _make_format(color: str) -> QTextCharFormat:
@@ -318,12 +340,11 @@ class _LineNumberArea(QWidget):
         self._editor.paint_line_numbers(event)
 
 
-class SpellHighlighter(QSyntaxHighlighter):
-    """Underline misspelled English words using pyspellchecker."""
+class SpellHighlighter:
+    """Finds misspelled English words using pyspellchecker."""
 
-    def __init__(self, parent: QTextDocument) -> None:
-        """Attach to *parent* document."""
-        super().__init__(parent)
+    def __init__(self) -> None:
+        """Load the dictionary and underline style."""
         self._spellchecker = SpellChecker()
         self._enabled = True
         self._fmt = QTextCharFormat()
@@ -340,18 +361,10 @@ class SpellHighlighter(QSyntaxHighlighter):
         """Whether spell highlighting is currently active."""
         return self._enabled
 
-    @override
-    def highlightBlock(self, text: str) -> None:
-        if not self._enabled:
-            return
-        for match in self._word_re.finditer(text):
-            word = match.group()
-            if word not in self._spellchecker.word_frequency:
-                self.setFormat(
-                    match.start(),
-                    match.end() - match.start(),
-                    self._fmt,
-                )
+    @property
+    def underline_format(self) -> QTextCharFormat:
+        """Underline style merged onto Markdown colours for misspellings."""
+        return self._fmt
 
     def misspelled_ranges(self, text: str) -> frozenset[tuple[int, int]]:
         """Return *text*'s misspelled spans as (start, end) word-local offsets.
@@ -376,15 +389,11 @@ class SourceEditor(QPlainTextEdit):
         self.setUndoRedoEnabled(False)
         self._gutter = _LineNumberArea(self)
         self._overlays: list[QTextEdit.ExtraSelection] = []
-        self._spell_highlighter = SpellHighlighter(self.document())
-        # 0ms single-shot so the spell rehighlight runs in the *same* event-loop
-        # cycle as the edit. Qt coalesces its repaint with the edit's paint, so
-        # the block's underlines replace in one pass with no flicker gap.
-        self._spell_timer = QTimer(self)
-        self._spell_timer.setSingleShot(True)
-        self._spell_timer.setInterval(0)
-        self._spell_timer.timeout.connect(self._do_spellcheck_rehighlight)
-        self.textChanged.connect(self._on_spellcheck_refresh)
+        self._spell_highlighter = SpellHighlighter()
+        self._highlighter = MarkdownHighlighter(
+            self.document(),
+            self._spell_highlighter,
+        )
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter)
         self.cursorPositionChanged.connect(self._highlight_current_line)
@@ -461,31 +470,13 @@ class SourceEditor(QPlainTextEdit):
         selections.extend(self._overlays)
         self.setExtraSelections(selections)
 
-    def _on_spellcheck_refresh(self) -> None:
-        if self._spell_highlighter.is_enabled:
-            self._spell_timer.start()
-
-    def _do_spellcheck_rehighlight(self) -> None:
-        if not self._spell_highlighter.is_enabled:
-            return
-        # rehighlight() emits textChanged (format-only). Block it so it can't
-        # loop back into _on_spellcheck_refresh nor disturb the preview/history.
-        with QSignalBlocker(self):
-            self._spell_highlighter.rehighlightBlock(self.textCursor().block())
-
-    def _rehighlight_spellcheck(self) -> None:
-        # Full rehighlight for toggle; blocked so it can't loop or disturb the
-        # preview/history. When disabled, highlightBlock() no-ops, clearing the
-        # underlines; when enabled it applies them.
-        with QSignalBlocker(self):
-            self._spell_highlighter.rehighlight()
-
     def set_spellcheck_enabled(self, *, enabled: bool) -> None:
         """Enable/disable spell check and refresh the highlighting."""
         self._spell_highlighter.set_enabled(enabled=enabled)
-        if not enabled:
-            self._spell_timer.stop()
-        self._rehighlight_spellcheck()
+        # rehighlight() can emit textChanged (format-only). Block it so it
+        # cannot disturb the preview/history.
+        with QSignalBlocker(self):
+            self._highlighter.rehighlight()
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
@@ -1324,8 +1315,6 @@ class EditorTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.splitter)
 
-        # Keep a reference so the highlighter is not GC'd.
-        self._highlighter = MarkdownHighlighter(self.editor.document())
         # Carets stay visible on the unfocused pane too.
         self._editor_caret = _InactiveCaret(self.editor)
         self._preview_caret = _InactiveCaret(self.preview)
@@ -1342,7 +1331,6 @@ class EditorTab(QWidget):
     def dispose(self) -> None:
         """Drop caret filters before Qt deletes nested editor widgets."""
         self._preview_timer.stop()
-        self.editor._spell_timer.stop()  # ruff: ignore[private-member-access]
         self._editor_caret.dispose()
         self._preview_caret.dispose()
 
@@ -2253,6 +2241,8 @@ class MainWindow(QMainWindow):
         index = self._tabs.index_of(tab)
         if index >= 0:
             self._tabs.set_tab_text(index, tab.tab_label())
+        # Tabs loaded while hidden defer their preview render until selected.
+        tab.refresh_preview()
         tab.editor.setFocus()
 
     def _try_unlock_tab(self, tab: EditorTab) -> None:
@@ -2394,6 +2384,7 @@ class MainWindow(QMainWindow):
         if self._spellcheck_action is not None:
             with QSignalBlocker(self._spellcheck_action):
                 self._spellcheck_action.setChecked(active_tab.spellcheck_on)
+        active_tab.refresh_preview()
         active_tab.editor.setFocus()
         self._set_title()
         self._update_status()

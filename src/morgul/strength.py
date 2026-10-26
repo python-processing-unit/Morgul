@@ -22,14 +22,14 @@ STRENGTH_LABELS = (
 
 @dataclass(frozen=True)
 class PasswordStrength:
-    """Normalised zxcvbn result.
+    """Represent a normalized zxcvbn password-strength result.
 
     Attributes:
-        score: 0-4, straight from zxcvbn (0 = terrible, 4 = great).
-        label: Short human-readable label for the score.
-        warning: zxcvbn contextual warning (e.g. "This is a top-10 common password"),
-            empty when there is none.
-        suggestions: zxcvbn improvement suggestions, ordered most-relevant first.
+        score (int): zxcvbn score from 0 (terrible) to 4 (great).
+        label (str): Short human-readable label for the score.
+        warning (str): Contextual zxcvbn warning, or an empty string if there is none.
+        suggestions (tuple[str, ...]): zxcvbn improvement suggestions, ordered by
+            relevance.
     """
 
     score: int
@@ -39,15 +39,17 @@ class PasswordStrength:
 
 
 def score_password(password: str) -> PasswordStrength:
-    """Score *password* with zxcvbn.
+    """Score a password using zxcvbn.
 
-    An empty password is treated as score 0 with no warning/suggestions so the
-    meter simply reads "Very weak" while the field is blank rather than erroring
-    on zxcvbn's ``""`` input.
+    An empty password receives score 0, the corresponding strength label, and no warning
+        or suggestions. For a non-empty password, the score and feedback are derived
+        from zxcvbn's result.
+
+    Args:
+        password (str): The password to score.
 
     Returns:
-        A :class:`PasswordStrength` with zxcvbn's score, label, warning and
-        suggestions.
+        PasswordStrength: The score, corresponding label, warning, and suggestions.
     """
     if not password:
         return PasswordStrength(

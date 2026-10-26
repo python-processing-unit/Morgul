@@ -8,10 +8,16 @@ from __future__ import annotations
 
 
 def normalize_plain(text: str) -> str:
-    r"""Normalize Qt / editor newlines to ``\n`` for stable alignment.
+    r"""Normalize Qt and editor newline variants to `\\n`.
+
+    Replace Unicode paragraph separators, Unicode line separators,
+        carriage-return/line-feed pairs, and carriage returns with newline characters.
+
+    Args:
+        text (str): Text to normalize.
 
     Returns:
-        *text* with Unicode paragraph separators and CR-LF folded to ``\n``.
+        str: The normalized text.
     """
     # QTextDocument.toPlainText() often emits U+2029 between blocks.
     return (
@@ -24,11 +30,18 @@ def normalize_plain(text: str) -> str:
 
 
 def preview_to_source_map(source: str, preview: str) -> list[int]:
-    """For each preview character, the source index it came from.
+    """Map each normalized preview character to its corresponding source index.
+
+    Normalize both strings, then match preview characters against the source in order.
+        Unmatched preview characters map to the current source position, capped at the
+        source length, without advancing that position.
+
+    Args:
+        source (str): The source text to search.
+        preview (str): The text whose characters are mapped to source positions.
 
     Returns:
-        A list of length ``len(preview)``. Unmatched preview chars (e.g. ☑)
-        pin to the current source hole without consuming source.
+        list[int]: Source indices for the normalized preview characters.
     """
     source = normalize_plain(source)
     preview = normalize_plain(preview)
@@ -48,10 +61,19 @@ def preview_to_source_map(source: str, preview: str) -> list[int]:
 def preview_pos_to_source(  # ruff: ignore[too-many-return-statements]
     source: str, preview: str, pos: int
 ) -> int:
-    """Map a caret/selection index in *preview* onto *source*.
+    """Map a preview caret position to a source index.
+
+    Normalize the source and preview text before mapping. If they match, or the
+        preview-to-source map is empty, use the nonnegative preview position clamped to
+        the source length.
+
+    Args:
+        source (str): Source text.
+        preview (str): Preview text.
+        pos (int): Caret position in the preview.
 
     Returns:
-        Source index to insert before (clamped).
+        int: Source index to insert before, clamped to the source length.
     """
     source = normalize_plain(source)
     preview = normalize_plain(preview)
@@ -76,10 +98,16 @@ def preview_pos_to_source(  # ruff: ignore[too-many-return-statements]
 def source_pos_to_preview(  # ruff: ignore[too-many-return-statements, complex-structure]
     source: str, preview: str, source_pos: int
 ) -> int:
-    """Map a caret index in *source* onto *preview* plain text.
+    """Map a caret position in source text to the preview position.
+
+    Args:
+        source (str): Source text used to determine the caret position.
+        preview (str): Preview text in which to place the caret.
+        source_pos (int): Caret index in the source text.
 
     Returns:
-        Preview index to place the caret (clamped).
+        int: Preview index for the caret, clamped to the available mapping. Returns 0 if
+            either text is empty or no mapping is available.
     """
     source = normalize_plain(source)
     preview = normalize_plain(preview)

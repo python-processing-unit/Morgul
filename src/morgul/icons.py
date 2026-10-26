@@ -41,10 +41,15 @@ _EYE_OFF_SVG = """\
 
 
 def _paint_svg(svg: str, *, colour: str, size: int) -> QIcon:
-    """Rasterise *svg* at *size*px with strokes/fills set to *colour*.
+    """Rasterize an SVG into a square icon with its current color replaced.
+
+    Args:
+        svg (str): SVG markup to render.
+        colour (str): Replacement for ``currentColor`` in the SVG markup.
+        size (int): Width and height of the rendered icon in pixels.
 
     Returns:
-        A ``QIcon`` backed by an ARGB pixmap.
+        QIcon: An icon backed by a transparent pixmap.
     """
     coloured = svg.replace("currentColor", colour)
     renderer = QSvgRenderer(QByteArray(coloured.encode("utf-8")))
@@ -59,45 +64,60 @@ def _paint_svg(svg: str, *, colour: str, size: int) -> QIcon:
 
 
 def close_icon(*, size: int = 14) -> QIcon:
-    """Tab close (X) glyph.
+    """Create a gray tab-close icon.
+
+    Args:
+        size (int): Width and height of the icon in pixels.
 
     Returns:
-        Grey close icon.
+        QIcon: The tab-close icon.
     """
     return _paint_svg(_CLOSE_SVG, colour="#c8c8c8", size=size)
 
 
 def close_icon_hover(*, size: int = 14) -> QIcon:
-    """Tab close glyph on hover.
+    """Create a white close icon for hover states.
+
+    Args:
+        size (int): Size passed to the icon renderer.
 
     Returns:
-        Brighter close icon for hover state.
+        QIcon: The rendered close icon.
     """
     return _paint_svg(_CLOSE_SVG, colour="#ffffff", size=size)
 
 
 def new_tab_icon(*, size: int = 16) -> QIcon:
-    """New-tab (+) glyph.
+    """Create a grey plus icon.
+
+    Args:
+        size (int): The icon size in pixels.
 
     Returns:
-        Grey plus icon.
+        QIcon: The grey plus icon.
     """
     return _paint_svg(_PLUS_SVG, colour="#c8c8c8", size=size)
 
 
 def eye_open_icon(*, size: int = 16) -> QIcon:
-    """Visible-password (open eye) glyph.
+    """Create a grey open-eye icon.
+
+    Args:
+        size (int): Size passed to the SVG renderer.
 
     Returns:
-        Grey open-eye icon.
+        QIcon: The rendered open-eye icon.
     """
     return _paint_svg(_EYE_OPEN_SVG, colour="#c8c8c8", size=size)
 
 
 def eye_off_icon(*, size: int = 16) -> QIcon:
-    """Hidden-password (slashed eye) glyph.
+    """Create a grey slashed-eye icon.
+
+    Args:
+        size (int): Icon size in pixels.
 
     Returns:
-        Grey slashed-eye icon.
+        QIcon: The grey slashed-eye icon.
     """
     return _paint_svg(_EYE_OFF_SVG, colour="#c8c8c8", size=size)

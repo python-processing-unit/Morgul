@@ -37,7 +37,13 @@ _RULES: list[tuple[str, Pattern[str]]] = [
 
 @dataclass(frozen=True, slots=True)
 class Span:
-    """A coloured slice of one line: ``[start, end)`` in line-local offsets."""
+    """Represent a colored slice of a line using line-local offsets.
+
+    Attributes:
+        start (int): Inclusive starting offset.
+        end (int): Exclusive ending offset.
+        kind (str): Color or category assigned to the slice.
+    """
 
     start: int
     end: int
@@ -45,14 +51,18 @@ class Span:
 
 
 def spans_in_line(line: str, *, in_fence: bool) -> tuple[list[Span], bool]:
-    """Return highlight spans for *line* and the fence state after the line.
+    """Return syntax-highlight spans for a line and the resulting fence state.
 
     Args:
-        line: One editor line (no trailing newline).
-        in_fence: Whether we are already inside a ``` fence from prior lines.
+        line (str): An editor line without a trailing newline.
+        in_fence (bool): Whether the preceding lines leave the parser inside a code
+            fence.
 
     Returns:
-        ``(spans, in_fence_after)``. Inside a fence the whole line is ``code``.
+        tuple[list[Span], bool]: The spans for the line and whether the parser is inside
+            a code fence afterward. Fence lines are styled as ``fence``; other lines
+            inside a fence are styled as ``code``. Outside a fence, matching whole-line
+            styles take precedence over overlapping inline styles.
     """
     stripped = line  # keep offsets aligned with the real line
     if in_fence:
@@ -88,13 +98,19 @@ def spans_in_line(line: str, *, in_fence: bool) -> tuple[list[Span], bool]:
 
 
 def highlight_ranges(text: str) -> list[tuple[int, int]]:
-    """Document-absolute ``[start, end)`` ranges covered by syntax colours.
+    """Return document-absolute ranges for syntax spans in the text.
 
-    Used by find-in-highlight so search can stay inside Markdown structure
-    (headings, code, links, …) without talking to Qt.
+    Process each line with `spans_in_line`, carrying its fence state forward, and offset
+        each returned span by its position in the original text. Line endings contribute
+        to subsequent offsets but are not included in the line body passed to
+        `spans_in_line`.
+
+    Args:
+        text (str): Text to inspect.
 
     Returns:
-        Non-overlapping-ish ranges in document order (may abut or nest lightly).
+        list[tuple[int, int]]: Ranges as `(start, end)` offset pairs, in line-processing
+            order.
     """
     ranges: list[tuple[int, int]] = []
     offset = 0

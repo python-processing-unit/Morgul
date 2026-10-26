@@ -26,7 +26,17 @@ CURRENT_VERSION = 0x00
 
 @dataclass(frozen=True, slots=True)
 class FormatConfig:
-    """Crypto + compression parameters for one MORGUL format revision."""
+    """Configure cryptographic and compression parameters for a MORGUL format revision.
+
+    Attributes:
+        argon2_time_cost (int): Argon2 time cost.
+        argon2_memory_kib (int): Argon2 memory limit in kibibytes.
+        argon2_parallelism (int): Argon2 parallelism.
+        argon2_hash_len (int): Argon2 hash length.
+        salt_len (int): Salt length.
+        nonce_len (int): Nonce length.
+        zstd_level (int): Zstandard compression level.
+    """
 
     argon2_time_cost: int
     argon2_memory_kib: int
@@ -52,16 +62,37 @@ FORMATS: dict[int, FormatConfig] = {
 
 
 class MorgulFormatError(ValueError):
-    """Corrupt header, unknown version, or failed authentication."""
+    """Represent an error raised for invalid Morgul format data.
+
+    This ValueError subclass indicates a corrupt header, an unknown version, or failed
+        authentication.
+    """
 
 
 def is_morgul_path(path: object) -> bool:
-    """Return True when *path* looks like a ``.morgul`` file."""
+    """Check whether a value's string form ends with `.morgul`, ignoring case.
+
+    Args:
+        path (object): The value to check.
+
+    Returns:
+        bool: Whether the string representation ends with `.morgul`.
+    """
     name = str(path).lower()
     return name.endswith(".morgul")
 
 
 def _derive_key(password: str, salt: bytes, cfg: FormatConfig) -> bytes:
+    """Derive a key from a password and salt using the configured Argon2id parameters.
+
+    Args:
+        password (str): Password to derive the key from.
+        salt (bytes): Salt used for key derivation.
+        cfg (FormatConfig): Configuration supplying the Argon2 parameters.
+
+    Returns:
+        bytes: The derived key.
+    """
     return hash_secret_raw(
         secret=password.encode("utf-8"),
         salt=salt,
@@ -74,14 +105,19 @@ def _derive_key(password: str, salt: bytes, cfg: FormatConfig) -> bytes:
 
 
 def pack(markdown: str, password: str, *, version: int = CURRENT_VERSION) -> bytes:
-    """Compress and encrypt *markdown* under *password*.
+    """Compress and encrypt Markdown into a MORGUL file blob.
+
+    Args:
+        markdown (str): Markdown text to encode as UTF-8, compress, and encrypt.
+        password (str): Password used to derive the encryption key; must not be empty.
+        version (int): MORGUL format version to use.
 
     Returns:
-        A complete MORGUL file blob.
+        bytes: The file blob containing the version, salt, nonce, and ciphertext.
 
     Raises:
-        MorgulFormatError: If *version* is not in :data:`FORMATS`.
-        ValueError: If *password* is empty.
+        ValueError: If password is empty.
+        MorgulFormatError: If version is not present in `FORMATS`.
     """
     if not password:
         msg = "Password must not be empty for MORGUL packing."
@@ -107,13 +143,19 @@ def pack(markdown: str, password: str, *, version: int = CURRENT_VERSION) -> byt
 
 
 def unpack(blob: bytes, password: str) -> str:
-    """Decrypt and decompress a MORGUL *blob*.
+    """Decrypt and decompress a MORGUL blob.
+
+    Args:
+        blob (bytes): Encrypted MORGUL data, including its version, salt, nonce, and
+            ciphertext.
+        password (str): Password used to derive the decryption key.
 
     Returns:
-        UTF-8 Markdown source.
+        str: Decrypted payload decoded as UTF-8.
 
     Raises:
-        MorgulFormatError: Bad header, unknown version, or wrong password.
+        MorgulFormatError: If the blob is empty, truncated, has an unknown version,
+            cannot be decrypted or decompressed, or does not contain valid UTF-8.
     """
     if len(blob) < 1:
         msg = "File is empty."
@@ -159,10 +201,14 @@ def unpack(blob: bytes, password: str) -> str:
 
 
 def looks_like_morgul(blob: bytes) -> bool:
-    """Heuristic: first byte is a known format version and length is plausible.
+    """Check whether blob has a recognized version and enough length.
+
+    Args:
+        blob (bytes): Data to check.
 
     Returns:
-        True when *blob* could be a MORGUL container.
+        bool: Whether the first byte identifies a known format and the blob is at least
+            one byte plus that format's salt length, nonce length, and 16 bytes.
     """
     if not blob:
         return False

@@ -125,7 +125,7 @@ if TYPE_CHECKING:
 
 
 class _UserCancelledError(Exception):
-    """User dismissed a required password prompt."""
+    """Signal that the user dismissed a required password prompt."""
 
 
 # MIME type used to drag a tab between windows (carries the tab's session id).
@@ -249,14 +249,19 @@ QMessageBox { background-color: #1e1e1e; }
 
 
 class MarkdownHighlighter(QSyntaxHighlighter):
-    """Colour one block at a time; fence state rides on ``previousBlockState``.
+    """Highlight Markdown syntax and merge spell-check underlines into each block.
 
-    Spell underlines are merged into the same pass so they cannot replace
-    Markdown colours (Qt allows only one highlighter's formats per block).
+    Track fenced-block state across blocks so Markdown formatting and spell-check
+        underlines can be applied by the same highlighter.
     """
 
     def __init__(self, document: QTextDocument, spell: SpellHighlighter) -> None:
-        """Attach to *document*; *spell* supplies underlines merged onto colours."""
+        """Attach the highlighter to a document and store its spell highlighter.
+
+        Args:
+            document (QTextDocument): The document to attach the highlighter to.
+            spell (SpellHighlighter): The spell highlighter to store.
+        """
         super().__init__(document)
         self._spell = spell
         self._formats = {kind: _make_format(color) for kind, color in _COLORS.items()}
@@ -266,7 +271,17 @@ class MarkdownHighlighter(QSyntaxHighlighter):
 
     @override
     def highlightBlock(self, text: str) -> None:
-        """Apply Markdown spans to the current block (Qt override)."""
+        """Highlight Markdown spans in the current text block.
+
+        Apply formats to the spans found in the line, update the block state to reflect
+            whether a code fence remains open, and apply spellcheck formatting.
+
+        Args:
+            text (str): The text in the current block.
+
+        Returns:
+            None: This method updates the current block's formatting and state.
+        """
         in_fence = self.previousBlockState() == _STATE_FENCE
         spans, still_fenced = spans_in_line(text, in_fence=in_fence)
         for span in spans:
@@ -275,6 +290,14 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         self._apply_spellcheck(text)
 
     def _apply_spellcheck(self, text: str) -> None:
+        """Apply spellcheck underlining to misspelled ranges.
+
+        Args:
+            text (str): Text to check for misspelled ranges.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if not self._spell.is_enabled:
             return
         underline = self._spell.underline_format
@@ -292,12 +315,27 @@ class MarkdownHighlighter(QSyntaxHighlighter):
 
 
 def _make_format(color: str) -> QTextCharFormat:
+    """Create a character format with the specified foreground color.
+
+    Args:
+        color (str): The foreground color to apply.
+
+    Returns:
+        QTextCharFormat: The character format with the specified foreground color.
+    """
     fmt = QTextCharFormat()
     fmt.setForeground(QColor(color))
     return fmt
 
 
 def _editor_font() -> QFont:
+    """Create the editor font.
+
+    Prefer Consolas, falling back to Cascadia Mono when it is unavailable.
+
+    Returns:
+        QFont: An 11-point Consolas or Cascadia Mono font.
+    """
     font = QFont("Consolas")
     if not font.exactMatch():
         font = QFont("Cascadia Mono")
@@ -306,11 +344,13 @@ def _editor_font() -> QFont:
 
 
 def _doc_end_position(document: QTextDocument) -> int:
-    """Return the caret position at the end of *document*.
+    """Return the cursor position at the end of the document.
+
+    Args:
+        document (QTextDocument): The document whose end position to retrieve.
 
     Returns:
-        Position suitable for ``QTextCursor.setPosition`` (not
-        ``characterCount() - 1``, which is often one too early).
+        int: The position at the document end, suitable for QTextCursor.setPosition.
     """
     cursor = QTextCursor(document)
     cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -318,33 +358,55 @@ def _doc_end_position(document: QTextDocument) -> int:
 
 
 class _LineNumberArea(QWidget):
-    """Narrow gutter that paints line numbers for :class:`SourceEditor`."""
+    """Display line numbers in a narrow gutter beside a `SourceEditor`."""
 
     def __init__(self, editor: SourceEditor) -> None:
-        """Bind to *editor*."""
+        """Initialize the line-number area for an editor.
+
+        Args:
+            editor (SourceEditor): The editor to use as the line-number area's parent
+                and reference.
+        """
         super().__init__(editor)
         self._editor = editor
 
     @override
     def sizeHint(self) -> QSize:
-        """Return the preferred gutter width.
+        """Return the preferred size of the line-number gutter.
 
         Returns:
-            Width from the editor's digit metrics; height unused by layout.
+            QSize: A size with the editor's line-number area width and a height of 0.
         """
         return QSize(self._editor.line_number_area_width(), 0)
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
-        """Delegate painting to the owning editor."""
+        """Paint the line-number area by delegating to the owning editor.
+
+        Args:
+            event (QPaintEvent): The paint event to pass to the editor.
+        """
         self._editor.paint_line_numbers(event)
 
 
 class SpellHighlighter:
-    """Finds misspelled English words using pyspellchecker."""
+    """Highlight words absent from the spellchecker's dictionary.
+
+    Match ASCII words with an optional apostrophe, and expose the highlighting state and
+        underline format.
+
+    Attributes:
+        is_enabled (bool): Whether spell highlighting is enabled.
+        underline_format (QTextCharFormat): The underline format used for misspelled
+            words.
+    """
 
     def __init__(self) -> None:
-        """Load the dictionary and underline style."""
+        """Initialize spell-checking state and underline formatting.
+
+        Returns:
+            None.
+        """
         self._spellchecker = SpellChecker()
         self._enabled = True
         self._fmt = QTextCharFormat()
@@ -353,24 +415,43 @@ class SpellHighlighter:
         self._word_re = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
     def set_enabled(self, *, enabled: bool) -> None:
-        """Enable or disable spell highlighting."""
+        """Set whether spell highlighting is enabled.
+
+        Args:
+            enabled (bool): Whether to enable spell highlighting.
+        """
         self._enabled = enabled
 
     @property
     def is_enabled(self) -> bool:
-        """Whether spell highlighting is currently active."""
+        """Report whether spell highlighting is enabled.
+
+        Returns:
+            bool: Whether spell highlighting is enabled.
+        """
         return self._enabled
 
     @property
     def underline_format(self) -> QTextCharFormat:
-        """Underline style merged onto Markdown colours for misspellings."""
+        """The underline format used for misspellings.
+
+        Returns:
+            QTextCharFormat: The character format used for misspelling underlines.
+        """
         return self._fmt
 
     def misspelled_ranges(self, text: str) -> frozenset[tuple[int, int]]:
-        """Return *text*'s misspelled spans as (start, end) word-local offsets.
+        """Return the character ranges of misspelled words.
+
+        A word is misspelled when it is absent from the spellchecker's word
+        frequency.
+
+        Args:
+            text (str): Text to search for words.
 
         Returns:
-            Set of character offsets where *text* is misspelled.
+            frozenset[tuple[int, int]]: Start-inclusive, end-exclusive character offsets
+                of words absent from the spellchecker's word frequency.
         """
         return frozenset(
             (match.start(), match.end())
@@ -380,10 +461,22 @@ class SpellHighlighter:
 
 
 class SourceEditor(QPlainTextEdit):
-    """Markdown source editor with a line-number gutter."""
+    """Provide a Markdown source editor with a line-number gutter.
+
+    Display line numbers and highlight the current line. Support spell-check formatting
+        and extra text selections, and use the containing main window for undo, redo,
+        and replace-mode input when available.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """Build the editor and its gutter."""
+        """Initialize the source editor and its line-number gutter.
+
+        Configure syntax and spell highlighting, cursor and gutter updates, and disable
+            Qt's undo stack.
+
+        Args:
+            parent (QWidget | None): The parent widget.
+        """
         super().__init__(parent)
         # Session-persisted undo lives on EditorTab; Qt's stack is not serializable.
         self.setUndoRedoEnabled(False)
@@ -401,21 +494,36 @@ class SourceEditor(QPlainTextEdit):
         self._highlight_current_line()
 
     def line_number_area_width(self) -> int:
-        """Width in pixels needed for the current last line number.
+        """Calculate the pixel width needed to display the current line count.
 
         Returns:
-            Gutter width including padding.
+            int: The width in pixels, including 12 pixels of padding.
         """
         digits = max(1, len(str(max(1, self.blockCount()))))
         return 12 + self.fontMetrics().horizontalAdvance("9") * digits
 
     def set_overlay_selections(self, overlays: list[QTextEdit.ExtraSelection]) -> None:
-        """Set non-line overlays (e.g. find hits) and rebuild extras."""
+        """Set non-line text selections and refresh the editor's extra selections.
+
+        Args:
+            overlays (list[QTextEdit.ExtraSelection]): Non-line overlays to apply.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self._overlays = overlays
         self._highlight_current_line()
 
     def paint_line_numbers(self, event: QPaintEvent) -> None:
-        """Paint visible line numbers into the gutter."""
+        """Paint visible, one-based line numbers in the gutter.
+
+        Args:
+            event (QPaintEvent): Paint event whose rectangle bounds the gutter area to
+                update.
+
+        Returns:
+            None: This method paints the gutter without returning a value.
+        """
         painter = QPainter(self._gutter)
         painter.fillRect(event.rect(), QColor("#252526"))
         block = self.firstVisibleBlock()
@@ -445,9 +553,27 @@ class SourceEditor(QPlainTextEdit):
         painter.end()
 
     def _update_gutter_width(self, _block_count: int) -> None:
+        """Update the viewport's left margin to fit the line-number area.
+
+        Args:
+            _block_count (int): The current block count; this method does not use it.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
 
     def _update_gutter(self, rect: QRect, dy: int) -> None:
+        """Update the gutter to reflect viewport changes.
+
+        Args:
+            rect (QRect): The rectangle affected by the viewport change.
+            dy (int): The vertical scroll displacement; a nonzero value scrolls the
+                gutter.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if dy:
             self._gutter.scroll(0, dy)
         else:
@@ -456,6 +582,11 @@ class SourceEditor(QPlainTextEdit):
             self._update_gutter_width(0)
 
     def _highlight_current_line(self) -> None:
+        """Highlight the current line and apply configured overlays.
+
+        Adds a full-width background selection for the current line when the editor is
+            editable, then applies the configured overlays.
+        """
         selections: list[QTextEdit.ExtraSelection] = []
         if not self.isReadOnly():
             line = QTextEdit.ExtraSelection()
@@ -471,7 +602,14 @@ class SourceEditor(QPlainTextEdit):
         self.setExtraSelections(selections)
 
     def set_spellcheck_enabled(self, *, enabled: bool) -> None:
-        """Enable/disable spell check and refresh the highlighting."""
+        """Enable or disable spell checking and refresh highlighting.
+
+        Temporarily block this editor's signals during rehighlighting so format-only
+            `textChanged` emissions do not disturb the preview or history.
+
+        Args:
+            enabled (bool): Whether spell checking should be enabled.
+        """
         self._spell_highlighter.set_enabled(enabled=enabled)
         # rehighlight() can emit textChanged (format-only). Block it so it
         # cannot disturb the preview/history.
@@ -480,7 +618,14 @@ class SourceEditor(QPlainTextEdit):
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
-        """Keep the gutter docked to the left of the viewport."""
+        """Position the gutter along the left edge of the contents area after resizing.
+
+        Args:
+            event (QResizeEvent): The resize event.
+
+        Returns:
+            None: This method does not return a value.
+        """
         super().resizeEvent(event)
         contents = self.contentsRect()
         self._gutter.setGeometry(
@@ -491,12 +636,32 @@ class SourceEditor(QPlainTextEdit):
         )
 
     def _main_window(self) -> MainWindow | None:
+        """Return the main window if the current window is a `MainWindow`.
+
+        Returns:
+            MainWindow | None: The current window if it is a `MainWindow`; otherwise,
+                `None`.
+        """
         win = self.window()
         return win if isinstance(win, MainWindow) else None
 
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Type normally, or overtype when replace mode is on (Ins toggles)."""
+        """Handle a key press, routing history, replace-mode, and text input.
+
+        Ctrl+Z undoes, Ctrl+Shift+Z and Ctrl+Y redo when a main window is available. An
+            unmodified Insert key toggles replace mode when a main window is available
+            and is consumed either way. In replace mode, printable text without Ctrl
+            overtypes the character at the cursor when there is no selection and the
+            cursor is not at the end; otherwise, it inserts the text normally. Keys not
+            handled here are passed to the superclass.
+
+        Args:
+            event (QKeyEvent): Key press event to handle.
+
+        Returns:
+            None: This method does not return a value.
+        """
         mods = event.modifiers()
         no_mods = mods in {
             Qt.KeyboardModifier.NoModifier,
@@ -541,6 +706,14 @@ class SourceEditor(QPlainTextEdit):
 
     @override
     def contextMenuEvent(self, event: QContextMenuEvent) -> None:
+        """Show the standard context menu with spelling suggestions when applicable.
+
+        Args:
+            event (QContextMenuEvent): The context menu event.
+
+        Returns:
+            None: This method does not return a value.
+        """
         menu = self.createStandardContextMenu()
         cursor = self.cursorForPosition(event.pos())
         cursor.select(QTextCursor.SelectionType.WordUnderCursor)
@@ -567,6 +740,13 @@ class SourceEditor(QPlainTextEdit):
         menu.exec_(event.globalPos())
 
     def _replace_word(self, start: int, end: int, new_word: str) -> None:
+        """Replace the text between two cursor positions.
+
+        Args:
+            start (int): The starting cursor position.
+            end (int): The ending cursor position.
+            new_word (str): The text to insert in place of the selected text.
+        """
         cursor = self.textCursor()
         cursor.setPosition(start)
         cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
@@ -576,10 +756,23 @@ class SourceEditor(QPlainTextEdit):
 
 
 class _InactiveCaret(QObject):
-    """Draw a solid caret on a text pane even when it does not have focus."""
+    """Draw a solid caret in a text pane that does not have focus.
+
+    The caret is not drawn when the text pane has a selection. Call `schedule_repaint`
+        to request a repaint after document layout, or `dispose` to remove the event
+        filter and signal connections.
+    """
 
     def __init__(self, pane: QPlainTextEdit | QTextBrowser) -> None:
-        """Attach to *pane* (source editor or preview)."""
+        """Initialize the inactive caret for a text pane.
+
+        Attach to the pane's viewport, monitor cursor and selection changes, and dispose
+            of the caret when the pane is destroyed.
+
+        Args:
+            pane (QPlainTextEdit | QTextBrowser): The source editor or preview pane to
+                monitor.
+        """
         super().__init__(pane)
         self._pane: QPlainTextEdit | QTextBrowser | None = pane
         self._viewport = pane.viewport()
@@ -591,7 +784,14 @@ class _InactiveCaret(QObject):
         pane.destroyed.connect(self.dispose)
 
     def dispose(self, *_args: object) -> None:
-        """Remove filters/signals so late paints cannot touch a dead pane."""
+        """Disable repaint handling and detach this object from its pane and viewport.
+
+        Args:
+            *_args (object): Positional arguments accepted but not used.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if not self._enabled and self._pane is None:
             return
         self._enabled = False
@@ -608,6 +808,10 @@ class _InactiveCaret(QObject):
                 viewport.removeEventFilter(self)
 
     def _request_repaint(self) -> None:
+        """Request a repaint when the caret is enabled and its pane is valid.
+
+        RuntimeError is suppressed in case the pane is already gone.
+        """
         pane = self._pane
         if not self._enabled or pane is None or not isValid(pane):
             return
@@ -615,16 +819,27 @@ class _InactiveCaret(QObject):
             pane.viewport().update()
 
     def schedule_repaint(self) -> None:
-        """Repaint after the event loop lays out the document (post-setHtml)."""
+        """Schedule a repaint on the next event-loop iteration if enabled."""
         if self._enabled:
             QTimer.singleShot(0, self._request_repaint)
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """After the viewport paints, draw our caret if the pane is unfocused.
+        """Draw the inactive caret after the pane viewport paints.
+
+        Return False when the filter is disabled, the pane or viewport is invalid or
+            unavailable, the event is not a paint event, or the watched object is not
+            the pane viewport. For a matching paint event, temporarily remove the
+            filter, resend the event, reinstall the filter if still enabled and valid,
+            and paint the caret.
+
+        Args:
+            watched (QObject): Object receiving the event.
+            event (QEvent): Event to filter.
 
         Returns:
-            True when this filter handled the paint event.
+            bool: True if the matching viewport paint event was handled; otherwise,
+                False.
         """
         pane = self._pane
         if (
@@ -648,6 +863,16 @@ class _InactiveCaret(QObject):
         return True
 
     def _paint_caret(self) -> None:
+        """Paint the caret when the pane is eligible.
+
+        Draw a vertical caret using the pane's foreground color when the pane is valid,
+            unfocused, and has no text selection, provided its cursor rectangle is
+            usable and intersects the viewport. Return without drawing if these
+            conditions are not met or if pane access raises RuntimeError.
+
+        Returns:
+            None.
+        """
         pane = self._pane
         if pane is None or not isValid(pane):
             return
@@ -679,7 +904,13 @@ class _InactiveCaret(QObject):
 
 
 class PreviewPane(QTextBrowser):
-    """Rendered Markdown with a caret; typing edits the source editor."""
+    """Provide a Markdown preview tied to a Markdown source editor.
+
+    The pane displays rendered HTML, fits embedded images to its viewport, and keeps the
+        source editor's caret aligned with preview selections. Movement keys act on the
+        source editor, while supported typing and editing keys apply changes to the
+        Markdown source. Links and text selection remain available in the preview.
+    """
 
     # Movement is applied to the *source* editor, not the rendered plain text.
     _MOVE_KEYS = frozenset({
@@ -703,7 +934,11 @@ class PreviewPane(QTextBrowser):
     _PREVIEW_ONLY_KEYS = frozenset({Qt.Key.Key_A, Qt.Key.Key_C})
 
     def __init__(self, tab: EditorTab) -> None:
-        """Bind to the owning *tab* (source editor + refresh)."""
+        """Initialize the preview pane for its owning editor tab.
+
+        Args:
+            tab (EditorTab): The editor tab associated with this pane.
+        """
         super().__init__()
         self._tab = tab
         self.setOpenExternalLinks(True)
@@ -719,11 +954,12 @@ class PreviewPane(QTextBrowser):
         )
 
     def set_preview_html(self, html: str, *, base_dir: Path | None) -> None:
-        """Load *html* with a file base URL and scale images to the viewport.
+        """Load HTML with a file-based base URL and fit images to the pane.
 
-        QTextBrowser ignores CSS ``max-width`` / percentage ``width`` on
-        ``<img>``, so large screenshots stay at intrinsic size and look
-        cropped/off-center. After parse, clamp every image to the pane width.
+        Args:
+            html (str): HTML content to load.
+            base_dir (Path | None): Directory to use as the base URL, or None to use the
+                current working directory.
         """
         root = (base_dir if base_dir is not None else Path.cwd()).resolve()
         base = QUrl.fromLocalFile(str(root) + "/")
@@ -732,7 +968,17 @@ class PreviewPane(QTextBrowser):
         self.fit_images()
 
     def fit_images(self) -> None:
-        """Clamp embedded images to the viewport width (keep aspect ratio)."""
+        """Fit embedded images within the viewport while preserving their aspect ratios.
+
+        The maximum image width is the viewport width minus 8 pixels, with a minimum of
+            32 pixels. Preserve an explicit image width when it is positive and within
+            that limit; otherwise, use the smaller of the image's natural width and the
+            limit. Update image formatting only when the width or height differs by at
+            least 0.5 pixels.
+
+        Returns:
+            None.
+        """
         doc = self.document()
         max_w = max(float(self.viewport().width() - 8), 32.0)
         # Skip no-op format writes when size already matches within half a pixel.
@@ -772,10 +1018,14 @@ class PreviewPane(QTextBrowser):
             block = block.next()
 
     def _image_for_format(self, img_fmt: QTextImageFormat) -> QImage | None:
-        """Resolve a ``QTextImageFormat`` to a ``QImage`` via base URL or path.
+        """Resolve an image format to a QImage.
+
+        Args:
+            img_fmt (QTextImageFormat): Image format whose name identifies the image.
 
         Returns:
-            The loaded image, or ``None`` when the resource cannot be resolved.
+            QImage | None: The image loaded from the resolved local file or document
+                resource, or None if neither yields a QImage.
         """
         name = img_fmt.name()
         url = QUrl(name)
@@ -795,15 +1045,19 @@ class PreviewPane(QTextBrowser):
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:
-        """Re-fit images when the preview pane width changes."""
+        """Delegate resize handling to the superclass and re-fit images.
+
+        Args:
+            event (QResizeEvent): Event describing the resize.
+        """
         super().resizeEvent(event)
         self.fit_images()
 
     def _source_range_for_preview_selection(self) -> tuple[int, int]:
-        """Map the current preview selection (or caret) onto source offsets.
+        """Map the current preview selection or caret to source offsets.
 
         Returns:
-            ``(start, end)`` indices into the Markdown source string.
+            A pair of ordered start and end indices into the Markdown source.
         """
         source = self._tab.editor.toPlainText()
         plain = self.toPlainText()
@@ -815,7 +1069,14 @@ class PreviewPane(QTextBrowser):
         return start, end
 
     def _sync_editor_caret(self) -> None:
-        """Copy the mapped preview selection onto the source editor caret."""
+        """Synchronize the source editor caret with the mapped preview selection.
+
+            Set the editor cursor to the mapped source range, preserving a selection
+                when the range has distinct endpoints, and update the editor viewport.
+
+        Returns:
+            None.
+        """
         start, end = self._source_range_for_preview_selection()
         cursor = self._tab.editor.textCursor()
         cursor.setPosition(start)
@@ -825,7 +1086,14 @@ class PreviewPane(QTextBrowser):
         self._tab.editor.viewport().update()
 
     def _navigate_in_source(self, event: QKeyEvent) -> None:
-        """Apply a movement key to the source editor, then mirror the caret here."""
+        """Forward a movement key to the source editor and update the preview caret.
+
+        Args:
+            event (QKeyEvent): The movement key event to send to the source editor.
+
+        Returns:
+            None: This method does not return a value.
+        """
         editor = self._tab.editor
         # Keep focus on the preview so typing continues here; only the caret moves.
         QApplication.sendEvent(editor, event)
@@ -835,17 +1103,28 @@ class PreviewPane(QTextBrowser):
         editor.viewport().update()
 
     def _replace_source(self, start: int, end: int, text: str) -> None:
-        """Replace ``source[start:end]`` with *text* (same as typing in the editor)."""
+        """Replace a range of source text with the supplied text.
+
+        Args:
+            start (int): Start index of the source range to replace.
+            end (int): End index of the source range to replace.
+            text (str): Text to insert in place of the range.
+        """
         self._tab.apply_source_edit(start, end, text)
 
     def _edit_from_key(self, key: int, *, ctrl: bool, text: str) -> bool:
-        """Apply a source edit for *key*.
+        """Apply a supported key edit to the source text.
 
-        Uses the **source** caret (kept in sync on click/arrows), not a fresh
-        preview→source remap, so multi-character typing does not drift.
+        Use the editor's current selection to determine the edit. When the action is a
+            cut, copy the selected source text to the clipboard.
+
+        Args:
+            key (int): Key code to process.
+            ctrl (bool): Whether the Control key is pressed.
+            text (str): Text associated with the key.
 
         Returns:
-            True when the key was handled as a source edit.
+            bool: Whether the key was handled as a source edit.
         """
         editor_cursor = self._tab.editor.textCursor()
         start = editor_cursor.selectionStart()
@@ -873,13 +1152,24 @@ class PreviewPane(QTextBrowser):
 
     @override
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """After a click, align the source caret with the preview caret."""
+        """Forward the mouse release and synchronize the editor caret.
+
+        Args:
+            event (QMouseEvent): The mouse release event.
+        """
         super().mouseReleaseEvent(event)
         self._sync_editor_caret()
 
     @override
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Navigate/edit as if the caret lived in the Markdown source editor."""
+        """Handle key presses using source-editor behavior when applicable.
+
+        Args:
+            event (QKeyEvent): The key event to handle.
+
+        Returns:
+            None: This method does not return a value.
+        """
         key = event.key()
         ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
 
@@ -912,12 +1202,27 @@ def _preview_key_action(  # ruff: ignore[complex-structure, too-many-return-stat
     source_len: int,
     replace_mode: bool = False,
 ) -> tuple[int, int, str | None, bool] | None:
-    """Translate a preview key into a source edit.
+    """Translate a preview key event into a source edit.
+
+    Return the deletion range, replacement text, and cut flag for supported keys, or
+        `None` when the key does not represent a source edit. A `None` replacement
+        indicates no document change; a true cut flag marks a deleted selection for
+        copying to the clipboard.
+
+    Args:
+        key (int): Key code to translate.
+        ctrl (bool): Whether the Control modifier is pressed.
+        text (str): Text produced by the key event.
+        start (int): Start of the current selection or cursor position.
+        end (int): End of the current selection.
+        source_len (int): Length of the source text.
+        replace_mode (bool): Whether printable input overwrites following characters
+            when there is no selection.
 
     Returns:
-        ``(del_start, del_end, replacement, cut)`` or ``None`` if the key is
-        not a source edit. ``replacement is None`` means no document change
-        (still handled). ``cut`` means copy the deleted span to the clipboard.
+        tuple[int, int, str | None, bool] | None: A tuple of deletion start, deletion
+            end, replacement text, and cut flag, or `None` if the key is not handled as
+            a source edit.
     """
     if ctrl and key == Qt.Key.Key_V:
         return start, end, QApplication.clipboard().text(), False
@@ -950,7 +1255,11 @@ def _preview_key_action(  # ruff: ignore[complex-structure, too-many-return-stat
 
 
 class _SvgToolButton(QToolButton):
-    """Tool button that swaps between two icons on hover."""
+    """Create a tool button that switches icons when hovered.
+
+    Use the normal icon by default and restore it when the pointer leaves. If no hover
+        icon is provided, use the normal icon for both states.
+    """
 
     def __init__(
         self,
@@ -959,7 +1268,13 @@ class _SvgToolButton(QToolButton):
         hover: QIcon | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        """Build with a normal icon and optional hover icon."""
+        """Initialize the button with normal and optional hover icons.
+
+        Args:
+            normal (QIcon): Icon displayed normally.
+            hover (QIcon | None): Icon displayed on hover; defaults to the normal icon.
+            parent (QWidget | None): Parent widget passed to the base class constructor.
+        """
         super().__init__(parent)
         self._normal = normal
         self._hover = hover if hover is not None else normal
@@ -968,30 +1283,48 @@ class _SvgToolButton(QToolButton):
 
     @override
     def enterEvent(self, event: QEnterEvent) -> None:
-        """Show the hover glyph."""
+        """Show the hover icon and forward the event to the base implementation.
+
+        Args:
+            event (QEnterEvent): The enter event.
+        """
         self.setIcon(self._hover)
         super().enterEvent(event)
 
     @override
     def leaveEvent(self, event: QEvent) -> None:
-        """Restore the normal glyph."""
+        """Restore the normal glyph and delegate the leave event to the base class.
+
+        Args:
+            event (QEvent): The leave event.
+        """
         self.setIcon(self._normal)
         super().leaveEvent(event)
 
 
 class _DraggableTabBar(QTabBar):
-    """QTabBar that lets a tab be dragged onto itself or another window.
+    """Provide a tab bar for initiating tab drags and requesting tab drops.
 
-    Within-window reordering and cross-window moves are handled uniformly
-    through Qt's drag-and-drop: the strip resolves the dragged tab's session id
-    and calls back to move/reorder.
+    Use Qt drag-and-drop events to detect tab drags carrying the configured MIME payload
+        and determine the insertion index for a drop. Emit signals so the owning strip
+        can handle starting, moving, or reordering tabs.
+
+    Attributes:
+        drag_started: Signal emitted with the index of the tab where a drag should
+            begin.
+        drop_requested: Signal emitted with the dragged tab's session ID and its
+            insertion index in this bar.
     """
 
     drag_started = Signal(int)  # index in this bar where a drag should begin
     drop_requested = Signal(str, int)  # session id, insertion index into this bar
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """Build a tab bar that participates in cross-window drag and drop."""
+        """Initialize a tab bar for custom tab reordering and drag-and-drop.
+
+        Args:
+            parent (QWidget | None): Widget that owns this tab bar, if any.
+        """
         super().__init__(parent)
         # We drive reordering/drops ourselves so the same code path serves
         # both within-window and cross-window moves.
@@ -1001,10 +1334,14 @@ class _DraggableTabBar(QTabBar):
         self._press_pos = QPoint()
 
     def _insertion_index_at(self, pos: QPoint) -> int:
-        """Tab index a drop at *pos* should insert before.
+        """Return the tab insertion index for a drop position.
+
+        Args:
+            pos (QPoint): Drop position; only its x-coordinate is used.
 
         Returns:
-            The index (0..count) before which the tab would land.
+            int: Index of the first tab whose center is to the right of the position, or
+                the tab count if none is.
         """
         for i in range(self.count()):
             if pos.x() < self.tabRect(i).center().x():
@@ -1013,7 +1350,14 @@ class _DraggableTabBar(QTabBar):
 
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """Record the tab under the cursor to seed a potential drag."""
+        """Record the pressed tab for potential drag detection and forward the event.
+
+        Args:
+            event (QMouseEvent): The mouse press event to handle.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if event.button() == Qt.MouseButton.LeftButton:
             self._press_index = self.tabAt(event.position().toPoint())
             self._press_pos = event.position().toPoint()
@@ -1023,7 +1367,17 @@ class _DraggableTabBar(QTabBar):
 
     @override
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """Start a tab drag once the cursor clears the drag threshold."""
+        """Emit the drag-start signal when a left-button drag crosses the threshold.
+
+        Reset the stored press index before emitting the signal; otherwise, pass the
+            event to the superclass implementation.
+
+        Args:
+            event (QMouseEvent): The mouse-move event to handle.
+
+        Returns:
+            None: This method does not return a value.
+        """
         point = event.position().toPoint()
         if (
             self._press_index >= 0
@@ -1039,26 +1393,53 @@ class _DraggableTabBar(QTabBar):
 
     @override
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """Forget any pending drag on release."""
+        """Clear the pending drag state and forward the release event.
+
+        Args:
+            event (QMouseEvent): The mouse release event.
+        """
         self._press_index = -1
         super().mouseReleaseEvent(event)
 
     @override
     def dragEnterEvent(self, event: QDropEvent) -> None:
-        """Accept tab drags that carry our MIME payload."""
+        """Accept the proposed action when the event carries the tab MIME payload.
+
+        Args:
+            event (QDropEvent): Drag event to inspect and accept when its MIME data
+                contains the tab format.
+        """
         if event.mimeData().hasFormat(_TAB_MIME):
             event.acceptProposedAction()
 
     @override
     def dragMoveEvent(self, event: QDropEvent) -> None:
-        """Show a drop indicator and accept the move over a valid insertion."""
+        """Check for tab MIME data and accept the proposed action when present.
+
+        Args:
+            event (QDropEvent): The drag-move event to process.
+
+        Returns:
+            None: This method returns no value.
+        """
         if event.mimeData().hasFormat(_TAB_MIME):
             self._insertion_index_at(event.position().toPoint())
             event.acceptProposedAction()
 
     @override
     def dropEvent(self, event: QDropEvent) -> None:
-        """Resolve the dragged tab and hand it to the strip to move/reorder."""
+        """Handle a tab drop event.
+
+        If the event contains tab MIME data, decode its session ID, emit a drop request
+            with the insertion index, and accept the proposed action; otherwise, ignore
+            the event.
+
+        Args:
+            event (QDropEvent): The drop event to handle.
+
+        Returns:
+            None
+        """
         mime = event.mimeData()
         if not mime.hasFormat(_TAB_MIME):
             event.ignore()
@@ -1071,10 +1452,18 @@ class _DraggableTabBar(QTabBar):
 
 
 class EditorTabStrip(QWidget):
-    """Tab titles + trailing SVG ``+`` + stacked editor pages.
+    """Manage editor tabs and their corresponding page widgets.
 
-    Uses a real ``QHBoxLayout`` so the new-tab control sits immediately after
-    the last tab and cannot be clipped the way a free child of ``QTabBar`` is.
+    The strip combines a tab bar, a new-tab button, and a stacked page area. It supports
+        reordering tabs and moving them between strips.
+
+    Attributes:
+        current_changed: Signal emitted with the current tab index when the tab bar
+            selection changes.
+        new_tab_requested: Signal emitted when the new-tab button is clicked.
+        tab_bar_clicked: Signal emitted with the index of the clicked tab.
+        owner (MainWindow | None): Owning window, assigned after construction and used
+            for tab-related operations.
     """
 
     current_changed = Signal(int)
@@ -1082,7 +1471,11 @@ class EditorTabStrip(QWidget):
     tab_bar_clicked = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """Build the strip, plus button, and page stack."""
+        """Initialize the tab strip, new-tab button, separator, and page stack.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+        """
         super().__init__(parent)
         # Owning MainWindow, set after construction (used for cross-window moves).
         self.owner: MainWindow | None = None
@@ -1126,12 +1519,28 @@ class EditorTabStrip(QWidget):
         root.addWidget(self._stack, 1)
 
     def _on_current_changed(self, index: int) -> None:
+        """Update the stacked widget and emit the current index.
+
+        Args:
+            index (int): Index to set as current and emit.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if 0 <= index < self._stack.count():
             self._stack.setCurrentIndex(index)
         self.current_changed.emit(index)
 
     def _on_drag_started(self, index: int) -> None:
-        """Begin a tab drag carrying the tab's session id."""
+        """Start a move drag for the editor tab at the given index.
+
+        Args:
+            index (int): Index of the tab to drag.
+
+        Returns:
+            None: Returns without starting a drag if the tab does not contain an
+                EditorTab.
+        """
         widget = self._stack.widget(index)
         if not isinstance(widget, EditorTab):
             return
@@ -1151,7 +1560,18 @@ class EditorTabStrip(QWidget):
         drag.exec_(Qt.DropAction.MoveAction)
 
     def _on_drop_requested(self, session_id: str, target_index: int) -> None:
-        """Move/reorder the dragged tab to ``target_index`` in this strip."""
+        """Move the requested tab to the target index in this strip.
+
+        If the session is not found in a strip, do nothing. Reorder the tab when it is
+            already in this strip, or move it here from another strip.
+
+        Args:
+            session_id (str): ID of the session whose tab to move.
+            target_index (int): Index where the tab should be placed.
+
+        Returns:
+            None: This method does not return a value.
+        """
         source = _strip_for_session(session_id)
         if source is None:
             return
@@ -1165,20 +1585,28 @@ class EditorTabStrip(QWidget):
         _move_tab_across_windows(source, source_index, self, target_index)
 
     def insert_tab(self, index: int, page: QWidget, title: str) -> int:
-        """Insert *page*/*title* at *index* in both the bar and the stack.
+        """Insert a page and titled tab at the specified index.
+
+        Args:
+            index (int): The position at which to insert the tab.
+            page (QWidget): The page to insert into the stack.
+            title (str): The title to display in the tab.
 
         Returns:
-            The index the tab was inserted at.
+            int: The index at which the tab was inserted.
         """
         self._stack.insertWidget(index, page)
         self._bar.insertTab(index, title)
         return index
 
     def index_of_session(self, session_id: str) -> int:
-        """Index of the EditorTab holding *session_id* in this strip.
+        """Return the index of the tab for the specified session.
+
+        Args:
+            session_id (str): The session ID to find.
 
         Returns:
-            The tab's index, or ``-1`` when absent.
+            int: The tab's index, or -1 if no matching tab is found.
         """
         for i in range(self._stack.count()):
             widget = self._stack.widget(i)
@@ -1187,10 +1615,13 @@ class EditorTabStrip(QWidget):
         return -1
 
     def index_of_path(self, path: Path) -> int:
-        """Index of the EditorTab whose path matches *path*, or ``-1``.
+        """Find the index of the editor tab matching a path.
+
+        Args:
+            path (Path): Path to compare with the paths of the editor tabs.
 
         Returns:
-            The tab's index, or ``-1`` when absent.
+            int: The matching tab's index, or -1 if no tab matches.
         """
         resolved = path.resolve()
         for i in range(self._stack.count()):
@@ -1204,7 +1635,19 @@ class EditorTabStrip(QWidget):
         return -1
 
     def _reorder(self, source: int, target: int) -> None:
-        """Move the tab at *source* to *target* within this strip."""
+        """Move the tab at the source index to the target index.
+
+        If no widget exists at the source index, leave the strip unchanged. Otherwise,
+            update the tab bar and widget stack, and reinstall the close button when an
+            owner is present.
+
+        Args:
+            source (int): Index of the tab to move.
+            target (int): Index at which to insert the tab.
+
+        Returns:
+            None: This method does not return a value.
+        """
         widget = self._stack.widget(source)
         if widget is None:
             return
@@ -1219,20 +1662,28 @@ class EditorTabStrip(QWidget):
             self.owner._install_close_button(target, cast("EditorTab", widget))  # ruff: ignore[private-member-access]
 
     def add_tab(self, page: QWidget, title: str) -> int:
-        """Append *page* and a matching title tab.
+        """Add a page and matching title tab.
+
+        Args:
+            page (QWidget): The page to add.
+            title (str): The title for the matching tab.
 
         Returns:
-            Index of the new tab.
+            int: The index of the added page.
         """
         index = self._stack.addWidget(page)
         self._bar.addTab(title)
         return index
 
     def remove_tab(self, index: int) -> QWidget | None:
-        """Drop the title and page at *index* (does not delete the page).
+        """Remove the tab and its page from the strip without deleting the page.
+
+        Args:
+            index (int): Index of the tab to remove.
 
         Returns:
-            The removed page widget, or ``None``.
+            QWidget | None: The removed page widget, or None if no page exists at the
+                index.
         """
         page = self._stack.widget(index)
         if page is not None:
@@ -1241,47 +1692,119 @@ class EditorTabStrip(QWidget):
         return page
 
     def set_tab_text(self, index: int, title: str) -> None:
-        """Update the title label for *index*."""
+        """Set the title of the tab at the given index.
+
+        Args:
+            index (int): Index of the tab to update.
+            title (str): New title for the tab.
+        """
         self._bar.setTabText(index, title)
 
     def set_tab_close_button(self, index: int, button: QWidget) -> None:
-        """Install a custom close control on the title tab."""
+        """Install a custom close control on a tab.
+
+        Args:
+            index (int): Index of the tab to update.
+            button (QWidget): Widget to display on the tab's right side.
+
+        Returns:
+            None
+        """
         self._bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, button)
 
     def current_index(self) -> int:
-        """Return the active tab index, or ``-1`` when empty."""
+        """Return the current index reported by the tab bar.
+
+        Returns:
+            int: The current tab index.
+        """
         return self._bar.currentIndex()
 
     def set_current_index(self, index: int) -> None:
-        """Select *index* on both the bar and the stack."""
+        """Set the tab bar index and update the stack index when the index is valid.
+
+        Args:
+            index (int): Index to set on the tab bar and, if within the stack's range,
+                on the stack.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self._bar.setCurrentIndex(index)
         if 0 <= index < self._stack.count():
             self._stack.setCurrentIndex(index)
 
     def current_widget(self) -> QWidget | None:
-        """Return the active page widget, if any."""
+        """Return the currently selected page widget, if one exists.
+
+        Returns:
+            QWidget | None: The current page widget, or None if no page is selected.
+        """
         return self._stack.currentWidget()
 
     def widget(self, index: int) -> QWidget | None:
-        """Return the page at *index*, if any."""
+        """Return the widget at the given page index.
+
+        Args:
+            index (int): Index of the page to retrieve.
+
+        Returns:
+            QWidget | None: The widget at the given index, or None if no widget is
+                present there.
+        """
         return self._stack.widget(index)
 
     def index_of(self, page: QWidget) -> int:
-        """Return the index of *page*, or ``-1``."""
+        """Return the index of the page in the stack, or -1 if it is not present.
+
+        Args:
+            page (QWidget): The page to find.
+
+        Returns:
+            int: The page's index, or -1 if it is not present.
+        """
         return self._stack.indexOf(page)
 
     def count(self) -> int:
-        """Return how many pages are open."""
+        """Return the number of pages in the tab strip.
+
+        Returns:
+            int: The number of pages in the tab strip.
+        """
         return self._stack.count()
 
 
 class EditorTab(QWidget):
-    """One document: editor + preview split, path, dirty flag."""
+    """Represent one document as a source editor and Markdown preview.
+
+    The tab manages the document's editing state, history, preview, and view options.
+
+    Attributes:
+        meta_changed (Signal): Emitted when tab metadata changes.
+        path (Path | None): Document path, or None for an untitled document.
+        password (str | None): Session password, or None for an unencrypted document.
+        dirty (bool): Whether the document differs from its saved or loaded state.
+        wrap_on (bool): Whether word wrapping is enabled.
+        preview_on (bool): Whether the preview pane is visible.
+        spellcheck_on (bool): Whether spell checking is enabled.
+        session_id: Identifier returned by new_tab_id for this tab.
+        history (EditHistory): The document's undo and redo history.
+        locked (bool): Whether the tab is a locked encrypted session.
+        locked_blob (bytes | None): Encrypted session data retained while the tab is
+            locked.
+        editor (SourceEditor): The source document editor.
+        preview (PreviewPane): The rendered Markdown preview.
+        splitter (QSplitter): The horizontal splitter containing the editor and preview.
+    """
 
     meta_changed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        """Build a blank untitled page."""
+        """Initialize an empty editor tab with a source editor and preview.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+        """
         super().__init__(parent)
         self.path: Path | None = None
         self.password: str | None = None  # session key; None = plaintext file
@@ -1329,34 +1852,51 @@ class EditorTab(QWidget):
         self.history.seed("")
 
     def dispose(self) -> None:
-        """Drop caret filters before Qt deletes nested editor widgets."""
+        """Stop the preview timer and dispose of the caret filters.
+
+        Run before the nested editor widgets are deleted.
+        """
         self._preview_timer.stop()
         self._editor_caret.dispose()
         self._preview_caret.dispose()
 
     def _hash_state(self, text: str) -> int:
-        """Hash covering content and encryption state.
+        """Compute a hash of the text and password state.
+
+        Args:
+            text (str): Text to include in the hash.
 
         Returns:
-            64-bit xxHash integer.
+            int: The 64-bit xxHash digest of the UTF-8 encoded text and a marker
+                indicating whether a password is set.
         """
         marker = "\x00P" if self.password else "\x00-"
         return xxhash.xxh3_64((text + marker).encode("utf-8")).intdigest()
 
     def _current_hash(self) -> int:
-        """Hash of the current editor content + encryption state.
+        """Compute a hash of the current editor text.
 
         Returns:
-            64-bit xxHash integer for the live editor state.
+            int: The hash produced by `_hash_state` for the editor's plain text.
         """
         return self._hash_state(self.editor.toPlainText())
 
     def _set_baseline(self, text: str) -> None:
-        """Record the hash representing the last saved/loaded state."""
+        """Record the hash of the supplied text as the baseline state.
+
+        Args:
+            text (str): Text whose hash becomes the baseline.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self._baseline_hash = self._hash_state(text)
 
     def _sync_dirty_to_hash(self) -> None:
-        """Recompute dirty from hash comparison; emit meta_changed on change."""
+        """Update the dirty flag from the current and baseline hashes.
+
+        Emit `meta_changed` only when the dirty flag changes.
+        """
         current = self._current_hash()
         if current != self._baseline_hash:
             if not self.dirty:
@@ -1367,14 +1907,15 @@ class EditorTab(QWidget):
             self.meta_changed.emit()
 
     def tab_label(self) -> str:
-        """Short name for the tab bar (with dirty star).
+        """Return the tab label with status markers.
 
-        For a file-backed tab the title is the filename; otherwise it is the
-        first line of the document, truncated to 15 characters (``Untitled``
-        when the document is empty).
+        Use the filename for file-backed tabs or the trimmed first line of the document,
+            truncated to 15 characters. Use ``Untitled`` when the document is empty or
+            its first line contains only whitespace. Append `` (locked)`` when locked
+            and prefix ``*`` when dirty.
 
         Returns:
-            Filename or first-line snippet, prefixed with ``*`` when dirty.
+            str: The tab label.
         """
         if self.path is not None:
             name = self.path.name
@@ -1386,13 +1927,25 @@ class EditorTab(QWidget):
         return f"*{name}" if self.dirty else name
 
     def _sync_preview_caret_from_editor(self) -> None:
-        """Mirror the source caret into the preview when the editor is driving."""
+        """Synchronize the preview caret when the preview is visible and unfocused.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if not self.preview.isVisible() or self.preview.hasFocus():
             return
         self.mirror_source_caret_to_preview()
 
     def mirror_source_caret_to_preview(self) -> None:
-        """Place the preview caret/selection from the source editor caret."""
+        """Mirror the source editor's caret or selection in the visible preview.
+
+        If the preview is hidden, leave it unchanged. Otherwise, map the source caret or
+            selection positions to the preview, clamp them to the preview document,
+            update the preview cursor, and schedule caret repaints for both viewports.
+
+        Returns:
+            None.
+        """
         if not self.preview.isVisible():
             return
         source = self.editor.toPlainText()
@@ -1404,6 +1957,14 @@ class EditorTab(QWidget):
         doc_end = _doc_end_position(self.preview.document())
 
         def _clamp(pos: int) -> int:
+            """Clamp a position to the document bounds.
+
+            Args:
+                pos (int): The position to clamp.
+
+            Returns:
+                int: The position limited to the range from 0 to `doc_end`.
+            """
             return min(max(pos, 0), doc_end)
 
         if editor_cursor.hasSelection():
@@ -1428,6 +1989,13 @@ class EditorTab(QWidget):
         self._editor_caret.schedule_repaint()
 
     def _on_text_changed(self) -> None:
+        """Handle changes to the editor text.
+
+        Record the text and cursor position in history and synchronize the dirty state
+            when history is not being applied and the tab is unlocked. Emit a metadata
+            change for an unlocked untitled tab, and start the preview timer when
+            preview synchronization is enabled.
+        """
         if not self._applying_history and not self.locked:
             self.history.record(
                 self.editor.toPlainText(),
@@ -1442,7 +2010,17 @@ class EditorTab(QWidget):
             self._preview_timer.start()
 
     def apply_history_frame(self, frame: EditFrame) -> None:
-        """Replace editor text/cursor from an undo/redo frame."""
+        """Apply a history frame to the editor.
+
+        Set the editor text and restore its cursor position, clamped to the text bounds.
+            Then synchronize the dirty state and refresh the preview.
+
+        Args:
+            frame (EditFrame): Frame containing the text and cursor position to apply.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self._applying_history = True
         try:
             self.editor.setPlainText(frame.text)
@@ -1455,9 +2033,19 @@ class EditorTab(QWidget):
         self.refresh_preview()
 
     def apply_source_edit(self, start: int, end: int, text: str) -> None:
-        """Apply a source edit as if it were typed in the Markdown editor.
+        """Apply a source edit and refresh the preview.
 
-        Used by the preview pane so keystrokes land in the same document.
+        Replace the selected range in the editor with the supplied text, clamping the
+            range to the current source text. Group the edit into one edit block, then
+            refresh the preview with the source caret followed.
+
+        Args:
+            start (int): Start position of the range to replace.
+            end (int): End position of the range to replace.
+            text (str): Text to insert in place of the range.
+
+        Returns:
+            None: This method does not return a value.
         """
         source = self.editor.toPlainText()
         start = max(0, min(start, len(source)))
@@ -1474,11 +2062,15 @@ class EditorTab(QWidget):
         self.refresh_preview(follow_source_caret=True)
 
     def refresh_preview(self, *, follow_source_caret: bool = False) -> None:
-        """Push current Markdown into the HTML preview if visible.
+        """Refresh the visible HTML preview from the current Markdown source.
+
+        Preserve the preview's scroll position and synchronize its cursor and selection
+            with the source editor. The source caret determines the preview cursor
+            position; `follow_source_caret` is ignored.
 
         Args:
-            follow_source_caret: Unused (kept for call-site compatibility).
-                The source caret is always the position source of truth.
+            follow_source_caret (bool): Retained for call-site compatibility and
+                ignored.
         """
         del follow_source_caret  # source caret always wins
         if not self.preview.isVisible():
@@ -1530,7 +2122,16 @@ class EditorTab(QWidget):
     def load_text(
         self, text: str, path: Path | None, *, password: str | None = None
     ) -> None:
-        """Replace contents without leaving a dirty flag behind."""
+        """Load text into the editor and reset its document state.
+
+        Args:
+            text (str): Text to load into the editor.
+            path (Path | None): Path associated with the loaded text, or None.
+            password (str | None): Password associated with the loaded text, or None.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self.locked = False
         self.locked_blob = None
         self.editor.setReadOnly(False)
@@ -1548,7 +2149,16 @@ class EditorTab(QWidget):
         self.refresh_preview()
 
     def apply_payload(self, payload: TabPayload, *, password: str | None) -> None:
-        """Restore a session payload (text, history, view flags)."""
+        """Restore this tab's state from a session payload.
+
+        Args:
+            payload (TabPayload): Payload containing the tab's history, path, editor
+                state, view settings, and scroll position.
+            password (str | None): Password to assign to the tab.
+
+        Returns:
+            None: This method updates the tab and editor in place.
+        """
         self.locked = False
         self.locked_blob = None
         self.editor.setReadOnly(False)
@@ -1575,10 +2185,24 @@ class EditorTab(QWidget):
         QTimer.singleShot(0, self._apply_restore_scroll)
 
     def _apply_restore_scroll(self) -> None:
+        """Restore the editor's vertical scroll position."""
         self.editor.verticalScrollBar().setValue(self._restore_scroll)
 
     def set_locked(self, blob: bytes, *, path: Path | None, dirty: bool) -> None:
-        """Show a locked encrypted session tab; body stays ciphertext until unlock."""
+        """Mark the tab as locked and clear its displayed content.
+
+        Store the encrypted blob, path, and dirty state; reset the password and history,
+            clear the editor and preview, and make the editor read-only with a
+            password-required placeholder.
+
+        Args:
+            blob (bytes): Encrypted session data to store for the locked tab.
+            path (Path | None): Path associated with the tab, if any.
+            dirty (bool): Whether the tab has unsaved changes.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self.locked = True
         self.locked_blob = blob
         self.path = path
@@ -1596,10 +2220,14 @@ class EditorTab(QWidget):
         self.preview.setHtml("")
 
     def to_payload(self) -> TabPayload:
-        """Snapshot unlocked tab state for session write.
+        """Create a payload from the tab's current state.
+
+        Synchronize the current history frame with the editor's text and cursor before
+            creating the payload.
 
         Returns:
-            Serializable tab body including undo/redo history.
+            TabPayload: The tab state, including edit history, path, status flags, and
+                vertical scroll position.
         """
         # Keep history.current aligned with the live buffer/cursor.
         text = self.editor.toPlainText()
@@ -1619,7 +2247,11 @@ class EditorTab(QWidget):
         )
 
     def set_wrap(self, *, on: bool) -> None:
-        """Toggle word wrap for this tab's editor."""
+        """Set word wrapping for this tab's editor.
+
+        Args:
+            on (bool): Whether to enable word wrapping.
+        """
         self.wrap_on = on
         mode = (
             QPlainTextEdit.LineWrapMode.WidgetWidth
@@ -1629,19 +2261,43 @@ class EditorTab(QWidget):
         self.editor.setLineWrapMode(mode)
 
     def set_preview(self, *, on: bool) -> None:
-        """Show or hide the preview pane."""
+        """Set the preview pane's visibility and refresh it when shown.
+
+        Args:
+            on (bool): Whether to show the preview pane.
+
+        Returns:
+            None: This method does not return a value.
+        """
         self.preview_on = on
         self.preview.setVisible(on)
         if on:
             self.refresh_preview()
 
     def set_spellcheck(self, *, on: bool) -> None:
-        """Toggle spell checking for this tab's editor."""
+        """Enable or disable spell checking for this tab's editor.
+
+        Args:
+            on (bool): Whether to enable spell checking. Updates the tab's spell-check
+                state and the editor's setting.
+        """
         self.spellcheck_on = on
         self.editor.set_spellcheck_enabled(enabled=on)
 
     def apply_find_highlights(self, matches: list[Match], current: int) -> None:
-        """Paint find hits with ExtraSelections; *current* index is brighter."""
+        """Apply find-result highlights to the editor.
+
+        Highlight each match with a dim background, except the match at `current`, which
+            uses a brighter background. Replace the editor's overlay selections with the
+            generated highlights.
+
+        Args:
+            matches (list[Match]): Matches to highlight, with start and end positions.
+            current (int): Index of the match to highlight more brightly.
+
+        Returns:
+            None: This method does not return a value.
+        """
         dim = QColor("#3a4a20")
         bright = QColor("#6b8c2a")
         selections: list[QTextEdit.ExtraSelection] = []
@@ -1658,11 +2314,18 @@ class EditorTab(QWidget):
         self.editor.set_overlay_selections(selections)
 
     def clear_find_highlights(self) -> None:
-        """Remove find ExtraSelections."""
+        """Clear all overlay selections from the editor."""
         self.editor.set_overlay_selections([])
 
     def reveal_match(self, hit: Match) -> None:
-        """Select *hit* and scroll it into view."""
+        """Select the match and center it in the editor view.
+
+        Args:
+            hit (Match): Match whose range to select.
+
+        Returns:
+            None: This method does not return a value.
+        """
         cursor = self.editor.textCursor()
         cursor.setPosition(hit.start)
         cursor.setPosition(hit.end, QTextCursor.MoveMode.KeepAnchor)
@@ -1671,10 +2334,19 @@ class EditorTab(QWidget):
 
 
 class FindReplaceDialog(QDialog):
-    """Modeless find/replace sheet shared across tabs."""
+    """Provide a modeless find-and-replace dialog for the active editor tab.
+
+    Support searching forward and backward, replacing one or all matches, and filtering
+        searches by case, whole-word, regular-expression, selection, or highlighted-zone
+        options.
+    """
 
     def __init__(self, main: MainWindow) -> None:
-        """Wire controls to *main*'s active tab."""
+        """Initialize the find-and-replace dialog and connect its controls.
+
+        Args:
+            main (MainWindow): Main window associated with the dialog.
+        """
         super().__init__(main)
         self._main = main
         self.setWindowTitle("Find and Replace")
@@ -1739,7 +2411,12 @@ class FindReplaceDialog(QDialog):
             box.toggled.connect(self._invalidate)
 
     def open_for_find(self) -> None:
-        """Show dialog focused on the find field (Ctrl+F)."""
+        """Open the dialog and focus its find field.
+
+        If the current tab has a nonempty single-line selection, use it as the find
+            text. Then show and activate the dialog, focus the find field, and select
+            its contents.
+        """
         tab = self._main.current_tab()
         if tab is not None:
             selected = tab.editor.textCursor().selectedText().replace("\u2029", "\n")
@@ -1752,11 +2429,16 @@ class FindReplaceDialog(QDialog):
         self._find_edit.selectAll()
 
     def open_for_replace(self) -> None:
-        """Show dialog focused on replace (Ctrl+H)."""
+        """Open the find-and-replace dialog and focus its replace field."""
         self.open_for_find()
         self._replace_edit.setFocus()
 
     def _options(self) -> FindOptions:
+        """Build find options from the current dialog controls.
+
+        Returns:
+            FindOptions: The options configured by the dialog controls.
+        """
         return FindOptions(
             pattern=self._find_edit.text(),
             case_sensitive=self._case.isChecked(),
@@ -1768,6 +2450,15 @@ class FindReplaceDialog(QDialog):
 
     @staticmethod
     def _selection_bounds(tab: EditorTab) -> tuple[int, int] | None:
+        """Get the selected text bounds.
+
+        Args:
+            tab (EditorTab): The editor tab whose selection bounds to retrieve.
+
+        Returns:
+            tuple[int, int] | None: The selection start and end positions, or None if
+                there is no selection.
+        """
         cursor = tab.editor.textCursor()
         if not cursor.hasSelection():
             return None
@@ -1776,6 +2467,14 @@ class FindReplaceDialog(QDialog):
         return (start, end)
 
     def _recompute(self, tab: EditorTab) -> bool:
+        """Recompute find matches for the current editor tab.
+
+        Args:
+            tab (EditorTab): The tab whose text and selection are searched.
+
+        Returns:
+            bool: Whether recomputing the matches succeeded.
+        """
         text = tab.editor.toPlainText()
         options = self._options()
         selection = self._selection_bounds(tab) if options.in_selection else None
@@ -1796,6 +2495,11 @@ class FindReplaceDialog(QDialog):
         return True
 
     def _invalidate(self) -> None:
+        """Clear cached matches and reset the current search state.
+
+        Clear find highlights from the current tab, if one exists, and clear the status
+            display.
+        """
         self._matches = []
         self._index = -1
         tab = self._main.current_tab()
@@ -1804,6 +2508,11 @@ class FindReplaceDialog(QDialog):
         self._status.clear()
 
     def _paint(self, tab: EditorTab) -> None:
+        """Update find highlights and status for the current matches.
+
+        Args:
+            tab (EditorTab): The editor tab to update.
+        """
         tab.apply_find_highlights(self._matches, self._index)
         if 0 <= self._index < len(self._matches):
             tab.reveal_match(self._matches[self._index])
@@ -1814,14 +2523,27 @@ class FindReplaceDialog(QDialog):
             self._status.setText("No matches")
 
     def find_next(self) -> None:
-        """Public Find Next (menu / F3)."""
+        """Run the Find Next command.
+
+        This public entry point is used by the menu and F3 shortcut and delegates to
+            `_find_next`.
+        """
         self._find_next()
 
     def find_prev(self) -> None:
-        """Public Find Previous (Shift+F3)."""
+        """Search for the previous match (Shift+F3)."""
         self._find_prev()
 
     def _find_next(self) -> None:
+        """Find and highlight the next match in the current tab.
+
+        Recompute matches before advancing the selection. Start at the first match when
+            no match is currently selected, and wrap to the first match after the last
+            one. Paint the tab when there are no matches.
+
+        Returns:
+            None.
+        """
         tab = self._main.current_tab()
         if tab is None:
             return
@@ -1837,6 +2559,13 @@ class FindReplaceDialog(QDialog):
         self._paint(tab)
 
     def _find_prev(self) -> None:
+        """Select and display the previous match.
+
+        Recompute matches for the current tab before changing the selection. If there
+            are no matches, repaint without changing the index; otherwise, move backward
+            with wraparound. Do nothing if there is no current tab or matches cannot be
+            recomputed.
+        """
         tab = self._main.current_tab()
         if tab is None:
             return
@@ -1852,6 +2581,15 @@ class FindReplaceDialog(QDialog):
         self._paint(tab)
 
     def _replace_one(self) -> None:
+        """Replace the current match in the active tab.
+
+        Recompute matches before replacing, update the editor text and cursor, then
+            refresh the match display. If no tab or match is available, or recomputing
+            fails, return without replacing text.
+
+        Returns:
+            None.
+        """
         tab = self._main.current_tab()
         if tab is None:
             return
@@ -1887,6 +2625,13 @@ class FindReplaceDialog(QDialog):
         self._paint(tab)
 
     def _replace_all(self) -> None:
+        """Replace all matching text in the current tab.
+
+        Use the configured options and, when requested, restrict replacements to the
+            selection or highlighted ranges. Report find errors in the status area;
+            after a successful replacement, update the editor if any occurrences were
+            replaced, clear find highlights, and reset the match state.
+        """
         tab = self._main.current_tab()
         if tab is None:
             return
@@ -1914,7 +2659,11 @@ class FindReplaceDialog(QDialog):
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Clear find paint when the sheet goes away."""
+        """Clear find highlights on the current tab, then forward the event.
+
+        Args:
+            event (QCloseEvent): The close event to handle.
+        """
         tab = self._main.current_tab()
         if tab is not None:
             tab.clear_find_highlights()
@@ -1922,14 +2671,24 @@ class FindReplaceDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    """Notepad shell: tab strip, menus, shared find dialog, status bar."""
+    """Manage the application's tabbed editor window.
+
+    Coordinate editor tabs, menus, find and replace, status updates, and session
+        restoration.
+
+    Attributes:
+        replace_mode: Whether overtype mode is active.
+    """
 
     def __init__(self, *, restore_session: bool = True) -> None:
-        """Build the window and, on the primary window, restore any session.
+        """Initialize the window and set up its editor interface.
+
+        Attempt to restore a session when requested; create a new tab if no session is
+            restored.
 
         Args:
-            restore_session: When True (the first window only) reload tabs from
-                ``~/.morgul``. New windows created later start blank instead.
+            restore_session (bool): Whether to attempt to restore a saved session.
+                Defaults to True.
         """
         super().__init__()
         self._replace_mode = False
@@ -1969,25 +2728,34 @@ class MainWindow(QMainWindow):
 
     @property
     def replace_mode(self) -> bool:
-        """True when overtype/replace mode is active (Ins toggles)."""
+        """Whether overtype mode is active.
+
+        Returns:
+            bool: True if overtype mode is active; otherwise, False.
+        """
         return self._replace_mode
 
     def toggle_replace_mode(self) -> None:
-        """Flip insert/overtype mode and refresh the status bar."""
+        """Toggle insert/overtype mode and refresh the status bar."""
         self._replace_mode = not self._replace_mode
         self._update_status()
 
     def current_tab(self) -> EditorTab | None:
-        """Active editor page, or ``None`` if the strip is empty.
+        """Return the current editor tab if the current widget is an editor tab.
 
         Returns:
-            The current :class:`EditorTab`, if any.
+            EditorTab | None: The current editor tab, or None if the current widget is
+                not an editor tab.
         """
         widget = self._tabs.current_widget()
         return widget if isinstance(widget, EditorTab) else None
 
     def tab_meta_changed(self) -> None:
-        """Refresh tab label + window title after dirty/path changes."""
+        """Refresh the current tab label and window title.
+
+        Returns:
+            None: This method does not return a value.
+        """
         tab = self.current_tab()
         if tab is None:
             return
@@ -1996,6 +2764,11 @@ class MainWindow(QMainWindow):
         self._set_title()
 
     def _build_menus(self) -> None:
+        """Build the application menus and connect their actions.
+
+        Returns:
+            None: This method builds the menus in place.
+        """
         file_menu = self.menuBar().addMenu("&File")
         file_menu.addAction(
             self._act("&New Tab", QKeySequence.StandardKey.New, self._new_tab)
@@ -2111,12 +2884,32 @@ class MainWindow(QMainWindow):
         shortcut: QKeySequence.StandardKey,
         slot: Callable[[], object],
     ) -> QAction:
+        """Create an action with the given text, shortcut, and connected slot.
+
+        Args:
+            text (str): The action's display text.
+            shortcut (QKeySequence.StandardKey): The action's keyboard shortcut.
+            slot (Callable[[], object]): The callable connected to the action's
+                triggered signal.
+
+        Returns:
+            QAction: The configured action.
+        """
         action = QAction(text, self)
         action.setShortcut(shortcut)
         action.triggered.connect(slot)
         return action
 
     def _set_title(self) -> None:
+        """Set the window title and password action text for the current tab.
+
+        Use the default title when no tab is selected; otherwise include the tab name
+            and a dirty marker when applicable. Update the password action text if it
+            exists.
+
+        Returns:
+            None
+        """
         tab = self.current_tab()
         if tab is None:
             self.setWindowTitle("Morgul")
@@ -2130,7 +2923,15 @@ class MainWindow(QMainWindow):
             )
 
     def _install_close_button(self, index: int, tab: EditorTab) -> None:
-        """Put an SVG X on the tab instead of the platform default mark."""
+        """Install a custom SVG close button on a tab.
+
+        Args:
+            index (int): Index of the tab where the button is installed.
+            tab (EditorTab): Tab to close when the button is clicked.
+
+        Returns:
+            None: This method does not return a value.
+        """
         btn = _SvgToolButton(
             normal=close_icon(size=12),
             hover=close_icon_hover(size=12),
@@ -2144,10 +2945,11 @@ class MainWindow(QMainWindow):
         self._tabs.set_tab_close_button(index, btn)
 
     def _new_window_action(self) -> QAction:
-        """Menu action that opens a second, blank editor window.
+        """Create the action for opening a new window.
 
         Returns:
-            The action bound to :meth:`_new_window`.
+            QAction: The action labeled “New Window,” with its shortcut and handler
+                configured.
         """
         action = QAction("New &Window", self)
         action.setShortcut(QKeySequence("Ctrl+Shift+N"))
@@ -2155,13 +2957,29 @@ class MainWindow(QMainWindow):
         return action
 
     def _new_window(self) -> None:
-        """Open a fresh, empty Morgul window offset from this one (drop target)."""
+        """Open and show a new empty Morgul window offset from this window.
+
+        The new window is positioned 28 pixels right and down from this window, with
+            session restoration disabled.
+
+        Returns:
+            None.
+        """
         win = MainWindow(restore_session=False)
         pos = self.pos()
         win.move(pos.x() + 28, pos.y() + 28)
         win.show()
 
     def _new_tab(self, *_args: object, select: bool = True) -> EditorTab:
+        """Create and attach a new editor tab.
+
+        Args:
+            *_args (object): Additional positional arguments, which are ignored.
+            select (bool): Whether to select the new tab.
+
+        Returns:
+            EditorTab: The newly created tab.
+        """
         tab = EditorTab()
         self._attach_tab(tab, select=select)
         return tab
@@ -2173,13 +2991,20 @@ class MainWindow(QMainWindow):
         index: int | None = None,
         select: bool = True,
     ) -> int:
-        """Wire an EditorTab into this window's strip (new or dragged here).
+        """Attach an editor tab to this window's tab strip.
 
-        Connects status/meta signals, installs a close button, and (when
-        *select*) focuses the tab.
+        Connect the tab's cursor-position and metadata signals, add or insert it at the
+            requested index, and install its close button. If `select` is true, select
+            and focus the tab and update the window title and status.
+
+        Args:
+            tab (EditorTab): The tab to attach.
+            index (int | None): The position at which to insert the tab, or `None` to
+                add it at the end.
+            select (bool): Whether to select and focus the tab after attaching it.
 
         Returns:
-            The tab's index in this strip.
+            int: The tab's index in the strip.
         """
         tab.editor.cursorPositionChanged.connect(self._update_status)
         tab.meta_changed.connect(self.tab_meta_changed)
@@ -2197,19 +3022,39 @@ class MainWindow(QMainWindow):
         return index
 
     def _detach_tab(self, tab: EditorTab) -> None:
-        """Disconnect this window's signals from *tab* (it is moving away)."""
+        """Disconnect this window's signal handlers from the tab being detached.
+
+        Args:
+            tab (EditorTab): The tab whose editor cursor-position and metadata-change
+                signals to disconnect.
+        """
         with contextlib.suppress(RuntimeError):
             tab.editor.cursorPositionChanged.disconnect(self._update_status)
         with contextlib.suppress(RuntimeError):
             tab.meta_changed.disconnect(self.tab_meta_changed)
 
     def _close_tab_widget(self, tab: EditorTab) -> None:
-        """Close by widget identity so tab indices cannot go stale."""
+        """Close the tab associated with the given editor widget.
+
+        Args:
+            tab (EditorTab): The editor tab to close.
+
+        Returns:
+            None: This method has no return value.
+        """
         index = self._tabs.index_of(tab)
         if index >= 0:
             self._close_tab_at(index)
 
     def _on_tab_changed(self, _index: int) -> None:
+        """Synchronize the view with the current tab unless a session is being restored.
+
+        Args:
+            _index (int): Index of the tab that changed.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if self._restoring_session:
             return
         tab = self.current_tab()
@@ -2218,7 +3063,16 @@ class MainWindow(QMainWindow):
         self._sync_view_for_tab(tab)
 
     def _on_tab_bar_clicked(self, index: int) -> None:
-        """Prompt for password only when the user opens that tab."""
+        """Handle a tab-bar click and attempt to unlock the selected tab.
+
+        Args:
+            index (int): Index of the clicked tab.
+
+        Returns:
+            None: This method returns without a value. During session restoration, it
+                does nothing; otherwise, it attempts to unlock the selected tab if it is
+                a locked editor tab, then synchronizes its view.
+        """
         if self._restoring_session:
             return
         widget = self._tabs.widget(index)
@@ -2227,6 +3081,17 @@ class MainWindow(QMainWindow):
             self._sync_view_for_tab(widget)
 
     def _sync_view_for_tab(self, tab: EditorTab) -> None:
+        """Synchronize the window view with a tab.
+
+        Update available view actions, the window title and status, and the tab label;
+            refresh the preview and focus the tab's editor.
+
+        Args:
+            tab (EditorTab): The tab whose view state to synchronize.
+
+        Returns:
+            None: This method does not return a value.
+        """
         if self._wrap_action is not None:
             with QSignalBlocker(self._wrap_action):
                 self._wrap_action.setChecked(tab.wrap_on)
@@ -2246,9 +3111,17 @@ class MainWindow(QMainWindow):
         tab.editor.setFocus()
 
     def _try_unlock_tab(self, tab: EditorTab) -> None:
-        """Prompt for password and decrypt a locked session tab in place.
+        """Unlock a locked tab in place using a password prompt.
 
-        Failures leave the tab open and locked so the user can switch away.
+        Return without unlocking the tab if it is not locked, has no locked blob, the
+            dialog is dismissed, no password is provided, or decoding fails. Show a
+            warning when decoding fails.
+
+        Args:
+            tab (EditorTab): The tab to unlock.
+
+        Returns:
+            None: This method updates the tab in place.
         """
         if not tab.locked or tab.locked_blob is None:
             return
@@ -2268,6 +3141,10 @@ class MainWindow(QMainWindow):
         self.tab_meta_changed()
 
     def _update_status(self) -> None:
+        """Update the status labels with the mode, format, and cursor position.
+
+        Clear the position label when no tab is active.
+        """
         tab = self.current_tab()
         mode = "OVR" if self._replace_mode else "INS"
         self._meta_label.setText(f"{mode}  |  UTF-8  |  Markdown")
@@ -2280,21 +3157,41 @@ class MainWindow(QMainWindow):
         self._pos_label.setText(f"Ln {line}, Col {col}")
 
     def _toggle_preview(self, *, checked: bool) -> None:
+        """Toggle preview for the current tab when it exists and is not locked.
+
+        Args:
+            checked (bool): Whether to enable preview.
+        """
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.set_preview(on=checked)
 
     def _toggle_wrap(self, *, checked: bool) -> None:
+        """Toggle line wrapping for the current tab when it is unlocked.
+
+        Args:
+            checked (bool): Whether wrapping should be enabled.
+        """
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.set_wrap(on=checked)
 
     def _toggle_spellcheck(self, *, checked: bool) -> None:
+        """Toggle spellchecking for the current unlocked tab.
+
+        Args:
+            checked (bool): Whether to enable spellchecking.
+        """
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.set_spellcheck(on=checked)
 
     def _undo(self) -> None:
+        """Undo the current tab's latest history step.
+
+        Returns:
+            None.
+        """
         tab = self.current_tab()
         if tab is None or tab.locked:
             return
@@ -2303,6 +3200,7 @@ class MainWindow(QMainWindow):
             tab.apply_history_frame(frame)
 
     def _redo(self) -> None:
+        """Redo the current tab's most recent undone history step."""
         tab = self.current_tab()
         if tab is None or tab.locked:
             return
@@ -2311,10 +3209,11 @@ class MainWindow(QMainWindow):
             tab.apply_history_frame(frame)
 
     def _restore_session(self) -> bool:
-        """Reload tabs from ``~/.morgul``.
+        """Restore session tabs and select the saved active tab.
 
         Returns:
-            True when at least one tab was restored.
+            Whether at least one session tab was opened. Returns False if no session
+                index is available or no tabs were opened.
         """
         index = load_index()
         if index is None:
@@ -2332,10 +3231,16 @@ class MainWindow(QMainWindow):
         return True
 
     def _load_session_tabs(self, index: SessionIndex) -> int:
-        """Materialize tabs from *index*; encrypted tabs stay locked.
+        """Load tabs from a session index.
+
+        Skip tabs whose blobs are missing or whose unencrypted blobs cannot be decoded.
+            Keep encrypted tabs locked.
+
+        Args:
+            index (SessionIndex): Session index containing the tabs to load.
 
         Returns:
-            Number of tabs successfully opened.
+            int: Number of tabs opened, including tabs left locked.
         """
         opened = 0
         for meta in index.tabs:
@@ -2362,7 +3267,17 @@ class MainWindow(QMainWindow):
         return opened
 
     def _drop_tab_widget(self, tab: EditorTab) -> None:
-        """Remove a half-built tab from the strip without discard prompts."""
+        """Remove and dispose of a partially built editor tab.
+
+        Remove the tab from the strip if it is present, then dispose of it and schedule
+            it for deletion.
+
+        Args:
+            tab (EditorTab): The tab to remove and dispose.
+
+        Returns:
+            None: This method does not return a value.
+        """
         idx = self._tabs.index_of(tab)
         if idx >= 0:
             self._tabs.remove_tab(idx)
@@ -2370,7 +3285,16 @@ class MainWindow(QMainWindow):
         tab.deleteLater()
 
     def _finish_session_restore(self) -> None:
-        """Sync chrome after restore; defer active-tab unlock until after show."""
+        """Synchronize the window chrome with the restored active tab.
+
+        If no active tab exists, return without updating the window. Otherwise, set the
+            pending unlock prompt from the tab's locked state, synchronize the wrap,
+            preview, and spellcheck actions, refresh the preview, focus the editor, and
+            update the title and status.
+
+        Returns:
+            None.
+        """
         active_tab = self.current_tab()
         if active_tab is None:
             return
@@ -2391,7 +3315,18 @@ class MainWindow(QMainWindow):
 
     @override
     def showEvent(self, event: QShowEvent) -> None:
-        """After the window is on screen, unlock the restored active tab if needed."""
+        """Handle the window becoming visible.
+
+        Call the superclass implementation and, if an active unlock prompt is pending,
+            clear the pending flag and schedule the unlock check for the next event-loop
+            tick.
+
+        Args:
+            event (QShowEvent): The window show event.
+
+        Returns:
+            None: This method does not return a value.
+        """
         super().showEvent(event)
         if self._prompt_active_unlock:
             self._prompt_active_unlock = False
@@ -2399,14 +3334,30 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._unlock_active_if_locked)
 
     def _unlock_active_if_locked(self) -> None:
-        """Prompt for the active tab's password (startup path only)."""
+        """Unlock the active tab if it is locked.
+
+        Get the current tab and, if it exists and is locked, attempt to unlock it and
+            synchronize its view.
+
+        Returns:
+            None.
+        """
         tab = self.current_tab()
         if tab is not None and tab.locked:
             self._try_unlock_tab(tab)
             self._sync_view_for_tab(tab)
 
     def _save_session(self) -> None:
-        """Persist all tabs (encrypted bodies use the document password)."""
+        """Persist the current editor tabs to the session store.
+
+        Save each editor tab's content and metadata, then remove stored blobs for tabs
+            that are no longer present. Reuse an existing encrypted blob for locked
+            tabs, and encrypt tab content when a password is set. Clear the session if
+            there are no editor tabs to save.
+
+        Returns:
+            None.
+        """
         count = self._tabs.count()
         if count == 0:
             clear_session()
@@ -2450,26 +3401,39 @@ class MainWindow(QMainWindow):
         prune_tab_blobs(keep)
 
     def _cut(self) -> None:
+        """Cut content from the current tab's editor if the tab is unlocked."""
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.editor.cut()
 
     def _copy(self) -> None:
+        """Copy the selection from the current tab if it is unlocked."""
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.editor.copy()
 
     def _paste(self) -> None:
+        """Paste clipboard contents into the current editor if it is unlocked."""
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.editor.paste()
 
     def _select_all(self) -> None:
+        """Select all text in the current tab when it is unlocked."""
         tab = self.current_tab()
         if tab is not None and not tab.locked:
             tab.editor.selectAll()
 
     def _confirm_discard(self, tab: EditorTab) -> bool:
+        """Confirm whether to discard a tab's unsaved changes.
+
+        Args:
+            tab (EditorTab): The tab to check.
+
+        Returns:
+            bool: Whether the changes may be discarded. Returns True immediately if the
+                tab is not dirty; otherwise, returns True only if the user selects Yes.
+        """
         if not tab.dirty:
             return True
         name = tab.path.name if tab.path is not None else "Untitled"
@@ -2483,6 +3447,18 @@ class MainWindow(QMainWindow):
         return answer == QMessageBox.StandardButton.Yes
 
     def _close_tab_at(self, index: int) -> None:
+        """Close the tab at the given index after confirming the discard.
+
+        If the indexed widget is not an EditorTab or discard is not confirmed, leave it
+            unchanged. When the last tab is closed, clear the session and close the
+            window.
+
+        Args:
+            index (int): Index of the tab to close.
+
+        Returns:
+            None: This method does not return a value.
+        """
         widget = self._tabs.widget(index)
         if not isinstance(widget, EditorTab):
             return
@@ -2496,11 +3472,17 @@ class MainWindow(QMainWindow):
             self.close()
 
     def _close_current(self) -> None:
+        """Close the current tab if one is selected."""
         index = self._tabs.current_index()
         if index >= 0:
             self._close_tab_at(index)
 
     def _open(self) -> None:
+        """Open a file selected from the file dialog.
+
+        Return without opening a file if the dialog is canceled; otherwise, pass the
+            selected path to `_open_path`.
+        """
         path_str, _ = QFileDialog.getOpenFileName(
             self,
             "Open",
@@ -2514,7 +3496,20 @@ class MainWindow(QMainWindow):
         self._open_path(Path(path_str))
 
     def _open_path(self, path: Path) -> None:
-        """Open *path*, switching to an existing tab if already open."""
+        """Open a document from the given path.
+
+        If the path is already open, select its tab and add it to recent files.
+            Otherwise, read the document and load it into the current tab if that tab is
+            empty, clean, unlocked, and has no path; create a new tab in all other
+            cases. Show a warning for format or operating-system errors, and return
+            without loading if the operation is cancelled.
+
+        Args:
+            path (Path): Path of the document to open.
+
+        Returns:
+            None
+        """
         existing = self._tabs.index_of_path(path)
         if existing >= 0:
             self._tabs.set_current_index(existing)
@@ -2547,7 +3542,15 @@ class MainWindow(QMainWindow):
         self.tab_meta_changed()
 
     def _rebuild_recent_menu(self) -> None:
-        """Repopulate the Open Recent submenu from ``self._recent``."""
+        """Rebuild the Open Recent submenu from the stored recent paths.
+
+        Add an action for each recent path, followed by a separator and a Clear Recent
+            Files action. If there are no recent paths, add a disabled No recent files
+            action instead.
+
+        Returns:
+            None.
+        """
         self._recent_menu.clear()
         if not self._recent:
             empty = self._recent_menu.addAction("No recent files")
@@ -2561,7 +3564,15 @@ class MainWindow(QMainWindow):
         clear.triggered.connect(self._clear_recent)
 
     def _add_recent(self, path: Path) -> None:
-        """Push *path* to the front of the recent list and persist it."""
+        """Move a path to the front of the recent list.
+
+        Save the list and refresh the recent menu. The list is truncated to the
+        recent-item limit, and an OSError while saving the list is ignored.
+
+        Args:
+            path (Path): The path to add to the recent list. If already present, its
+                existing entry is moved to the front.
+        """
         entry = str(path)
         with contextlib.suppress(ValueError):
             self._recent.remove(entry)
@@ -2572,14 +3583,24 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_menu()
 
     def _clear_recent(self) -> None:
-        """Empty the recent list and its menu."""
+        """Clear recent items and rebuild the recent menu.
+
+        Ignore any OSError raised while clearing recent items with clear_recent().
+        """
         self._recent.clear()
         with contextlib.suppress(OSError):
             clear_recent()
         self._rebuild_recent_menu()
 
     def _open_recent(self, path_str: str) -> None:
-        """Open a file chosen from the Open Recent submenu."""
+        """Open a recent file, dropping it if it is no longer a file.
+
+        Args:
+            path_str (str): Path to the file to open.
+
+        Returns:
+            None: This method does not return a value.
+        """
         path = Path(path_str)
         if not path.is_file():
             QMessageBox.warning(self, "Morgul", f"File not found:\n{path}")
@@ -2592,13 +3613,18 @@ class MainWindow(QMainWindow):
         self._open_path(path)
 
     def _read_document(self, path: Path) -> tuple[str, str | None]:
-        """Load Markdown or MORGUL from *path*.
+        """Read a Markdown or encrypted MORGUL document from a path.
+
+        Args:
+            path (Path): Path to the document to read.
 
         Returns:
-            ``(markdown, password_or_none)``.
+            tuple[str, str | None]: The document content and, for encrypted documents,
+                the password used to unlock it; otherwise, `None`.
 
         Raises:
-            _UserCancelledError: User aborted the password prompt.
+            _UserCancelledError: If the password prompt is cancelled or provides no
+                password.
         """
         raw = path.read_bytes()
         encrypted = is_morgul_path(path) or looks_like_morgul(raw)
@@ -2615,7 +3641,19 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _write_document(tab: EditorTab, path: Path) -> None:
-        """Write *tab* contents to *path* (MORGUL when a password is set)."""
+        """Write the editor tab's contents to the specified path.
+
+        If the tab has a password, pack its contents with that password and write the
+            resulting bytes. Otherwise, write the contents as UTF-8 text with LF
+            newlines.
+
+        Args:
+            tab (EditorTab): Editor tab whose contents to write.
+            path (Path): Destination path.
+
+        Returns:
+            None
+        """
         text = tab.editor.toPlainText()
         if tab.password:
             path.write_bytes(pack(text, tab.password))
@@ -2623,6 +3661,17 @@ class MainWindow(QMainWindow):
             path.write_text(text, encoding="utf-8", newline="\n")
 
     def _save(self) -> None:
+        """Save the current tab to its existing path when possible.
+
+        If there is no current tab or the tab is locked, do nothing. Use the Save As
+            flow when the tab has no path or its password state does not match the
+            container type. On a successful save, add the path to recent files, update
+            the editor baseline, clear the dirty flag, and notify that tab metadata
+            changed. Show a warning if writing the document raises an OSError.
+
+        Returns:
+            None.
+        """
         tab = self.current_tab()
         if tab is None or tab.locked:
             return
@@ -2647,6 +3696,14 @@ class MainWindow(QMainWindow):
         self.tab_meta_changed()
 
     def _save_as(self) -> None:
+        """Save the current tab to a selected path.
+
+        Return without saving if there is no current tab, the tab is locked, or the save
+            dialog is canceled. Choose a default filename and file filter based on
+            whether the tab has a password, and adjust the selected file extension
+            accordingly. If writing fails with an `OSError`, display a warning;
+            otherwise, update the tab path, recent files, baseline, and dirty state.
+        """
         tab = self.current_tab()
         if tab is None or tab.locked:
             return
@@ -2685,6 +3742,16 @@ class MainWindow(QMainWindow):
         self.tab_meta_changed()
 
     def _set_password(self) -> None:
+        """Set, change, or remove the current tab's password.
+
+        If the current tab is locked, attempt to unlock it instead. Otherwise, show the
+            password dialog and update the tab only if the dialog is accepted and
+            provides a result. Notify the user when the document's encryption state does
+            not match its file type.
+
+        Returns:
+            None.
+        """
         tab = self.current_tab()
         if tab is None:
             return
@@ -2715,6 +3782,16 @@ class MainWindow(QMainWindow):
             )
 
     def _export_markdown(self) -> None:
+        """Export the current unlocked tab as a Markdown file.
+
+        Use the tab's path with a `.md` suffix as the default destination, or
+            `export.md` if it has no path. Do nothing if there is no current tab, the
+            tab is locked, or the save dialog is canceled. Show a warning if writing the
+            file fails.
+
+        Returns:
+            None.
+        """
         tab = self.current_tab()
         if tab is None or tab.locked:
             return
@@ -2739,6 +3816,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Morgul", f"Could not export:\n{exc}")
 
     def _export_html(self) -> None:
+        """Export the current unlocked tab as an HTML file.
+
+        Use the tab's existing path with an `.html` suffix as the default filename, or
+            `export.html` when it has no path. Show a warning if writing the file fails.
+        """
         tab = self.current_tab()
         if tab is None or tab.locked:
             return
@@ -2764,7 +3846,15 @@ class MainWindow(QMainWindow):
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Persist tabs under ``~/.morgul`` (Notepad-style; keeps dirty buffers)."""
+        """Save the session before closing the window.
+
+        If saving raises an `OSError`, ask whether to quit anyway; ignore the close
+            event if the user declines. Otherwise, close the find dialog, remove this
+            window from the tracked windows when present, and accept the close event.
+
+        Args:
+            event (QCloseEvent): The close event to accept or ignore.
+        """
         try:
             self._save_session()
         except OSError as exc:
@@ -2785,10 +3875,14 @@ class MainWindow(QMainWindow):
 
 
 def _strip_for_session(session_id: str) -> EditorTabStrip | None:
-    """Window strip currently holding the tab with *session_id*, if any.
+    """Find the tab strip containing the specified session.
+
+    Args:
+        session_id (str): ID of the session to locate.
 
     Returns:
-        The :class:`EditorTabStrip` that owns the tab, or ``None``.
+        EditorTabStrip | None: The tab strip containing the session, or None if no valid
+            window contains it.
     """
     for win in _WINDOWS:
         if not isValid(win):
@@ -2805,10 +3899,21 @@ def _move_tab_across_windows(
     target: EditorTabStrip,
     target_index: int,
 ) -> None:
-    """Transfer the tab at *source_index* from *source* to *target*.
+    """Move an editor tab from one tab strip to another.
 
-    Moves the EditorTab widget, reconnects it to the destination window, and
-    closes *source* when it has no tabs left.
+    If the indexed widget is not an EditorTab or either strip has no owner, leave both
+        strips unchanged. Otherwise, detach the tab from the source window, attach and
+        select it in the target window, and close the source window if it has no tabs
+        remaining. If tabs remain, update the source window's title and status.
+
+    Args:
+        source (EditorTabStrip): Tab strip containing the tab to move.
+        source_index (int): Index of the tab in the source strip.
+        target (EditorTabStrip): Tab strip that receives the tab.
+        target_index (int): Index at which to attach the tab in the target strip.
+
+    Returns:
+        None: This function does not return a value.
     """
     widget = source._stack.widget(source_index)  # ruff: ignore[private-member-access]
     if not isinstance(widget, EditorTab):
@@ -2830,10 +3935,13 @@ def _move_tab_across_windows(
 
 
 def run() -> None:
-    """Create the QApplication and show the main window.
+    """Create and display the main application window.
+
+    Configure the Qt application, show the window, and open the first command-line
+        argument as a path if one is provided. Run the Qt event loop.
 
     Raises:
-        SystemExit: Always, with the Qt event-loop exit code.
+        SystemExit: With the Qt event-loop exit code.
     """
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough

@@ -24,11 +24,16 @@ _CODE_FORMATTER = HtmlFormatter(
 
 
 def _highlight_code(code: str, language: str, _attrs: str) -> str:
-    """Highlight a known fenced-code language, or request the safe fallback.
+    """Highlight code when the language is recognized.
+
+    Args:
+        code (str): Source code to highlight.
+        language (str): Name of the lexer to use.
+        _attrs (str): Additional attributes, unused by this function.
 
     Returns:
-        Pygments HTML for a known language, or an empty string for the default
-        markdown-it escaping path.
+        str: Highlighted Pygments HTML for a recognized language, or an empty string if
+            the language is missing or unknown.
     """
     if not language:
         return ""
@@ -61,10 +66,14 @@ _DISALLOWED_TAGS = re.compile(
 
 
 def _tagfilter(html: str) -> str:
-    """Apply GFM tagfilter: escape disallowed raw HTML tags.
+    """Escape disallowed raw HTML tags.
+
+    Args:
+        html (str): HTML text to filter.
 
     Returns:
-        HTML with ``<`` replaced by ``&lt;`` for blocked tag names.
+        str: HTML with the opening angle bracket of each matched disallowed tag replaced
+            by `&lt;`.
     """
     return _DISALLOWED_TAGS.sub(r"&lt;\1\2", html)
 
@@ -140,19 +149,26 @@ ul.contains-task-list > li { margin: 0.15em 0; }
 
 
 def _normalize_task_markdown(source: str) -> str:
-    """Coerce common near-GFM task boxes into real GFM ``[ ]`` / ``[x]``.
+    """Normalize recognized empty task boxes in Markdown.
+
+    Args:
+        source (str): Markdown text to normalize.
 
     Returns:
-        Source with bare ``[]`` task boxes expanded to ``[ ]``.
+        str: The source with matching empty task boxes replaced by ``[ ]``.
     """
     return _LOOSE_EMPTY_BOX.sub(r"\1[ ]\2", source)
 
 
 def _qtify_tasklists(html: str) -> str:
-    """Replace checkbox ``<input>`` tags with Unicode ballot boxes.
+    """Replace task-list checkbox inputs with Unicode ballot boxes.
+
+    Args:
+        html (str): HTML containing task-list checkbox inputs.
 
     Returns:
-        HTML QTextBrowser can actually paint (no form controls).
+        str: HTML with recognized checked and unchecked checkbox inputs replaced by list
+            items containing Unicode ballot boxes. Checked inputs are replaced first.
     """
     # Checked first so the second pattern does not steal them.
     html = _CHECKED_ITEM.sub(f"<li>{_CHECK_ON}", html)
@@ -160,10 +176,14 @@ def _qtify_tasklists(html: str) -> str:
 
 
 def to_html(source: str) -> str:
-    """Render Markdown *source* to a full HTML document string.
+    """Render Markdown source as a complete HTML document.
+
+    Args:
+        source (str): Markdown text to render.
 
     Returns:
-        A self-contained HTML page suitable for ``QTextBrowser.setHtml``.
+        str: HTML document containing a UTF-8 character-set declaration, embedded CSS,
+            and the rendered body.
     """
     rendered = _PARSER.render(_normalize_task_markdown(source))
     body = _qtify_tasklists(_tagfilter(rendered))

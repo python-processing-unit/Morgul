@@ -77,6 +77,8 @@ ignore = [
     "multi-line-summary-second-line",
     # Unlicense / public domain — no copyright headers.
     "missing-copyright-notice",
+    # DOC202: Returns sections are kept even when the return is implicit/None-y.
+    "docstring-extraneous-returns",
 ]
 
 [tool.ruff.lint.per-file-ignores]

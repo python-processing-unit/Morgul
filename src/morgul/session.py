@@ -18,53 +18,66 @@ RECENT_LIMIT = 10
 
 
 def session_root() -> Path:
-    """Return ``~/.morgul``.
+    """Return the path to the Morgul session directory.
 
     Returns:
-        The session root directory path.
+        Path: Path to the `.morgul` directory in the user's home directory.
     """
     return Path.home() / ".morgul"
 
 
 def tabs_dir() -> Path:
-    """Return ``~/.morgul/tabs``.
+    """Return the path to the tabs directory.
 
     Returns:
-        Directory that holds per-tab payload blobs.
+        Path: The path formed by appending "tabs" to the session root.
     """
     return session_root() / "tabs"
 
 
 def session_file() -> Path:
-    """Return ``~/.morgul/session.json``.
+    """Return the path to the session index file.
 
     Returns:
-        Path to the session index file.
+        Path to ``session.json`` inside the session root.
     """
     return session_root() / "session.json"
 
 
 def tab_blob_path(tab_id: str) -> Path:
-    """Path for one tab's payload blob.
+    """Return the payload blob path for a tab.
+
+    Args:
+        tab_id (str): Identifier used to name the tab's blob file.
 
     Returns:
-        ``~/.morgul/tabs/<id>.tab``.
+        Path: Path to the tab's `.tab` payload blob.
     """
     return tabs_dir() / f"{tab_id}.tab"
 
 
 def new_tab_id() -> str:
-    """Allocate a unique tab id for session files.
+    """Generate a unique hexadecimal tab identifier.
 
     Returns:
-        A hex UUID string.
+        A hexadecimal UUID string.
     """
     return uuid.uuid4().hex
 
 
 @dataclass(slots=True)
 class TabMeta:
-    """One row in the session index (no secrets, no body)."""
+    """Represent one session-index row without secrets or message body.
+
+    Attributes:
+        id (str): Session identifier.
+        path (str | None): Path associated with the session, if available.
+        encrypted (bool): Whether the session is encrypted.
+        wrap_on (bool): Whether text wrapping is enabled.
+        preview_on (bool): Whether preview is enabled.
+        spellcheck_on (bool): Whether spellchecking is enabled.
+        dirty (bool): Whether the session has unsaved changes.
+    """
 
     id: str
     path: str | None
@@ -77,7 +90,13 @@ class TabMeta:
 
 @dataclass(slots=True)
 class SessionIndex:
-    """Ordered open tabs + active index."""
+    """Represent ordered open tabs and the index of the active tab.
+
+    Attributes:
+        version (int): Version value for this session index.
+        active (int): Index of the active tab in `tabs`.
+        tabs (list[TabMeta]): Open tabs in order.
+    """
 
     version: int
     active: int
@@ -86,7 +105,17 @@ class SessionIndex:
 
 @dataclass(slots=True)
 class TabPayload:
-    """In-memory tab body + undo history (before encrypt/write)."""
+    """Store a tab's in-memory editing state and undo history.
+
+    Attributes:
+        history (EditHistory): The tab's editing history.
+        path (str | None): The tab's file path, if one is set.
+        dirty (bool): Whether the tab has unsaved changes.
+        wrap_on (bool): Whether text wrapping is enabled.
+        preview_on (bool): Whether preview is enabled.
+        spellcheck_on (bool): Whether spellchecking is enabled.
+        scroll (int): The tab's scroll position.
+    """
 
     history: EditHistory
     path: str | None
@@ -97,10 +126,10 @@ class TabPayload:
     scroll: int = 0
 
     def to_json(self) -> str:
-        """Serialize as UTF-8 JSON text (packable as MORGUL payload).
+        """Serialize the tab payload as compact JSON text.
 
         Returns:
-            Compact JSON string.
+            str: The payload encoded as a JSON string.
         """
         body: dict[str, Any] = {
             "v": SESSION_VERSION,
@@ -116,13 +145,20 @@ class TabPayload:
 
     @classmethod
     def from_json(cls, text: str) -> TabPayload:
-        """Parse :meth:`to_json` output.
+        """Restore a tab payload from its JSON representation.
+
+        Invalid or non-string paths are replaced with None. Boolean fields are converted
+            to bool, and scroll is reset to 0 if it is not an integer or is negative.
+            Invalid JSON propagates the `json.JSONDecodeError` raised by the decoder.
+
+        Args:
+            text (str): JSON text representing a tab payload.
 
         Returns:
-            Restored payload.
+            TabPayload: The restored payload.
 
         Raises:
-            TypeError: Top-level value is not an object.
+            TypeError: If the decoded top-level value is not an object.
         """
         data = json.loads(text)
         if not isinstance(data, dict):
@@ -149,10 +185,16 @@ class TabPayload:
 
 
 def encode_tab_blob(payload: TabPayload, password: str | None) -> bytes:
-    """Encode *payload*; encrypt with *password* when set (same as .morgul files).
+    """Encode a tab payload as UTF-8 JSON or a password-protected blob.
+
+    Args:
+        payload (TabPayload): The tab payload to serialize.
+        password (str | None): The password used to pack the serialized payload when
+            non-empty.
 
     Returns:
-        Plain UTF-8 JSON bytes, or a MORGUL blob when *password* is set.
+        bytes: The serialized payload as UTF-8 JSON bytes when password is empty or
+            None, or as a packed blob otherwise.
     """
     raw = payload.to_json()
     if password:
@@ -161,13 +203,18 @@ def encode_tab_blob(payload: TabPayload, password: str | None) -> bytes:
 
 
 def decode_tab_blob(blob: bytes, password: str | None) -> TabPayload:
-    """Decode a tab blob; *password* required when the blob is MORGUL-packed.
+    """Decode a tab blob into a payload.
+
+    Args:
+        blob (bytes): Serialized tab data.
+        password (str | None): Password used to unpack a MORGUL-packed blob, if needed.
 
     Returns:
-        The decoded tab payload.
+        TabPayload: The decoded tab payload.
 
     Raises:
-        ValueError: Corrupt plain JSON or encrypted blob without password.
+        ValueError: If the blob is MORGUL-packed and no password is provided, or if
+            plain tab data cannot be decoded.
     """
     if looks_like_morgul(blob):
         if not password:
@@ -182,20 +229,35 @@ def decode_tab_blob(blob: bytes, password: str | None) -> TabPayload:
 
 
 def blob_is_encrypted(blob: bytes) -> bool:
-    """True when *blob* is a MORGUL container.
+    """Check whether the blob looks like a MORGUL container.
+
+    Args:
+        blob (bytes): The data to check.
 
     Returns:
-        Whether *blob* looks like a MORGUL file.
+        bool: Whether the blob looks like a MORGUL container.
     """
     return looks_like_morgul(blob)
 
 
 def ensure_session_dirs() -> None:
-    """Create ``~/.morgul/tabs`` if needed."""
+    """Create the session tabs directory and any missing parent directories."""
     tabs_dir().mkdir(parents=True, exist_ok=True)
 
 
 def _parse_meta(item: object) -> TabMeta | None:
+    """Parse a metadata item into a tab record.
+
+    Return `None` if the item is not a dictionary or does not contain a nonempty string
+        ID. Non-string paths are treated as `None`, and boolean fields are converted
+        with `bool()`.
+
+    Args:
+        item (object): Value to parse.
+
+    Returns:
+        TabMeta | None: Parsed tab metadata, or `None` if the item is invalid.
+    """
     if not isinstance(item, dict):
         return None
     tab_id = item.get("id")
@@ -216,10 +278,14 @@ def _parse_meta(item: object) -> TabMeta | None:
 
 
 def load_index() -> SessionIndex | None:
-    """Read session index, or None if missing/invalid.
+    """Load the session index from disk.
+
+    Return None if the file is missing, unreadable, invalid, or contains no parseable
+        tabs. The active tab index is clamped to the available tabs.
 
     Returns:
-        Parsed index, or ``None`` when nothing usable is on disk.
+        SessionIndex | None: The parsed session index, or None if no usable index is
+            available.
     """
     path = session_file()
     if not path.is_file():
@@ -243,7 +309,17 @@ def load_index() -> SessionIndex | None:
 
 
 def save_index(index: SessionIndex) -> None:
-    """Write session index atomically-ish."""
+    """Write the session index to disk through a temporary file.
+
+    Serialize the index as indented UTF-8 JSON, then replace the session index file with
+        the temporary file.
+
+    Args:
+        index (SessionIndex): Session index containing the active session and tabs.
+
+    Returns:
+        None
+    """
     ensure_session_dirs()
     body = {
         "version": SESSION_VERSION,
@@ -271,10 +347,14 @@ def save_index(index: SessionIndex) -> None:
 
 
 def read_tab_blob(tab_id: str) -> bytes | None:
-    """Return raw tab bytes, or None if missing.
+    """Read the tab blob and return its raw bytes.
+
+    Args:
+        tab_id (str): Identifier used to locate the tab blob.
 
     Returns:
-        File contents, or ``None`` on missing/IO error.
+        bytes | None: The blob contents, or None if the path is not a file or reading
+            raises OSError.
     """
     path = tab_blob_path(tab_id)
     if not path.is_file():
@@ -286,7 +366,18 @@ def read_tab_blob(tab_id: str) -> bytes | None:
 
 
 def write_tab_blob(tab_id: str, blob: bytes) -> None:
-    """Write one tab payload blob."""
+    """Write a tab's binary payload to its session file.
+
+    Ensure the session directories exist, write the payload to a temporary file, and
+        replace the tab's existing blob with it.
+
+    Args:
+        tab_id (str): Identifier of the tab whose blob is written.
+        blob (bytes): Binary payload to write.
+
+    Returns:
+        None
+    """
     ensure_session_dirs()
     path = tab_blob_path(tab_id)
     tmp = path.with_suffix(".tmp")
@@ -295,7 +386,14 @@ def write_tab_blob(tab_id: str, blob: bytes) -> None:
 
 
 def prune_tab_blobs(keep_ids: set[str]) -> None:
-    """Delete tab files whose ids are not in *keep_ids*."""
+    """Remove tab files whose IDs are not in `keep_ids`.
+
+    Args:
+        keep_ids (set[str]): IDs of tab files to retain.
+
+    Returns:
+        None: This function does not return a value.
+    """
     root = tabs_dir()
     if not root.is_dir():
         return
@@ -305,7 +403,11 @@ def prune_tab_blobs(keep_ids: set[str]) -> None:
 
 
 def clear_session() -> None:
-    """Remove index and all tab blobs."""
+    """Remove the session index file and matching tab files.
+
+    The index file is removed if it exists as a file, and files matching `*.tab` in the
+        tabs directory are removed if that directory exists.
+    """
     idx = session_file()
     if idx.is_file():
         idx.unlink(missing_ok=True)
@@ -316,19 +418,21 @@ def clear_session() -> None:
 
 
 def recent_file() -> Path:
-    """Return ``~/.morgul/recent.json``.
+    """Return the path to the recent-files list.
 
     Returns:
-        Path to the Open Recent list file.
+        Path to ``recent.json`` in the session root.
     """
     return session_root() / "recent.json"
 
 
 def load_recent() -> list[str]:
-    """Read the recent-files list, newest first.
+    """Load and filter the saved recent-files list.
 
     Returns:
-        Up to :data:`RECENT_LIMIT` file paths, or ``[]`` when missing/invalid.
+        list[str]: String entries from the saved list, in their original order, limited
+            to `RECENT_LIMIT`; returns an empty list if the file is missing, unreadable,
+            invalid JSON, or does not contain a list.
     """
     path = recent_file()
     if not path.is_file():
@@ -343,7 +447,17 @@ def load_recent() -> list[str]:
 
 
 def save_recent(files: list[str]) -> None:
-    """Persist *files* (newest first) to ``~/.morgul/recent.json``."""
+    """Save recent file paths to the session's recent-files JSON file.
+
+    Write at most RECENT_LIMIT paths from the beginning of `files`, preserving their
+        order, as indented UTF-8 JSON.
+
+    Args:
+        files (list[str]): Recent file paths, ordered newest first.
+
+    Returns:
+        None
+    """
     ensure_session_dirs()
     path = recent_file()
     tmp = path.with_suffix(".tmp")
@@ -356,5 +470,5 @@ def save_recent(files: list[str]) -> None:
 
 
 def clear_recent() -> None:
-    """Delete the recent-files list."""
+    """Remove the recent-files file if it exists."""
     recent_file().unlink(missing_ok=True)

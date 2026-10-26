@@ -13,7 +13,18 @@ from re import Pattern
 
 @dataclass(frozen=True, slots=True)
 class FindOptions:
-    """Knob cluster for one search or replace pass."""
+    """Configure matching behavior for one search or replace pass.
+
+    Attributes:
+        pattern (str): Text or regular expression to match.
+        case_sensitive (bool): Whether matching is case-sensitive.
+        whole_word (bool): Whether matches must be whole words.
+        regex (bool): Whether to interpret the pattern as a regular expression.
+        in_selection (bool): Whether to limit matches to the range from selection_start
+            to selection_end.
+        in_highlight (bool): Whether to limit matches to ranges fully inside a highlight
+            span.
+    """
 
     pattern: str
     case_sensitive: bool = False
@@ -27,24 +38,36 @@ class FindOptions:
 
 @dataclass(frozen=True, slots=True)
 class Match:
-    """One hit: ``[start, end)`` in the full document string."""
+    """Represent a match as a half-open span in the full document string.
+
+    Attributes:
+        start (int): Inclusive start index of the match.
+        end (int): Exclusive end index of the match.
+    """
 
     start: int
     end: int
 
 
 class FindError(ValueError):
-    """Bad pattern (usually an invalid regular expression)."""
+    """Represent an error caused by a bad search pattern."""
 
 
 def compile_pattern(options: FindOptions) -> Pattern[str]:
-    """Build the regex used for find/replace.
+    """Compile the search pattern according to the find options.
+
+    Escape the pattern unless regex mode is enabled, apply case sensitivity, and
+        optionally require whole-word matches.
+
+    Args:
+        options (FindOptions): Search options containing the pattern and matching
+            settings.
 
     Returns:
-        A compiled pattern ready for ``finditer`` / ``sub``.
+        Pattern[str]: The compiled regular expression.
 
     Raises:
-        FindError: If *options.pattern* is empty or not a valid regex.
+        FindError: If the pattern is empty or contains an invalid regular expression.
     """
     raw = options.pattern
     if not raw:
@@ -64,7 +87,17 @@ def compile_pattern(options: FindOptions) -> Pattern[str]:
 
 
 def _in_any_range(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
-    """Return True when [start, end) sits fully inside one of *ranges*."""
+    """Check whether the interval [start, end) is contained in any range.
+
+    Args:
+        start (int): Start of the interval to check.
+        end (int): End of the interval to check.
+        ranges (list[tuple[int, int]]): Ranges to check, each represented by a start and
+            end pair.
+
+    Returns:
+        bool: True if any range contains the interval; otherwise, False.
+    """
     return any(start >= r0 and end <= r1 for r0, r1 in ranges)
 
 
@@ -75,16 +108,23 @@ def find_all(
     selection: tuple[int, int] | None = None,
     highlight_ranges: list[tuple[int, int]] | None = None,
 ) -> list[Match]:
-    """Return every match in *text* honouring *options*.
+    """Find all non-empty matches in the text that satisfy the search options.
+
+    When selection filtering is enabled, search only the specified selection and return
+        no matches if it is missing or empty. When highlight filtering is enabled,
+        include only matches contained in a highlight range. Returned match offsets are
+        relative to the original text.
 
     Args:
-        text: Full document text.
-        options: Search knobs.
-        selection: ``(start, end)`` used when ``options.in_selection``.
-        highlight_ranges: Syntax spans used when ``options.in_highlight``.
+        text (str): Full document text to search.
+        options (FindOptions): Search options controlling the search and filtering.
+        selection (tuple[int, int] | None): Selection bounds used when selection
+            filtering is enabled.
+        highlight_ranges (list[tuple[int, int]] | None): Highlight ranges used when
+            highlight filtering is enabled.
 
     Returns:
-        Matches in document order (non-overlapping, leftmost-longest via finditer).
+        list[Match]: Non-empty matches in document order, with non-overlapping spans.
     """
     pattern = compile_pattern(options)
 
@@ -124,10 +164,20 @@ def replace_all(
     selection: tuple[int, int] | None = None,
     highlight_ranges: list[tuple[int, int]] | None = None,
 ) -> tuple[str, int]:
-    """Replace every match.
+    """Replace every match found in the text.
+
+    Args:
+        text (str): Text to search and update.
+        options (FindOptions): Options used to find matches and determine whether
+            replacement is regex-based.
+        replacement (str): Text to use for each replacement.
+        selection (tuple[int, int] | None): Optional selection range passed to the
+            search.
+        highlight_ranges (list[tuple[int, int]] | None): Optional highlight ranges
+            passed to the search.
 
     Returns:
-        ``(new_text, count)`` where *count* is how many hits were replaced.
+        tuple[str, int]: The updated text and the number of matches replaced.
     """
     hits = find_all(
         text,
@@ -157,10 +207,17 @@ def replace_one(
     replacement: str,
     hit: Match,
 ) -> str:
-    """Replace a single known *hit*.
+    """Replace one known match in the text.
+
+    Args:
+        text (str): The full text containing the match.
+        options (FindOptions): Options that determine whether the replacement uses a
+            regular expression.
+        replacement (str): The replacement text.
+        hit (Match): The match to replace.
 
     Returns:
-        The new full document text.
+        str: The full text with the match replaced.
     """
     if options.regex:
         pattern = compile_pattern(options)

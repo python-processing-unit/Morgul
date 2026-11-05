@@ -265,7 +265,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### pygments 2.20.0
+### pygments 2.21.0
 
 ```
 Copyright (c) 2006-2022 by the respective authors (see AUTHORS file).
@@ -495,7 +495,7 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
  */
 ```
 
-### pyspellchecker 0.9.0
+### pyspellchecker 0.9.1
 
 ```
 MIT License
@@ -805,10 +805,10 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### xxhash 3.8.1
+### xxhash 4.0.2
 
 ```
-Copyright (c) 2014-2024, Yue Du
+Copyright (c) 2014-2026, Yue Du
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
@@ -892,7 +892,7 @@ SOFTWARE.
 
 ## Development Dependencies
 
-### pre-commit 4.6.1
+### pre-commit 4.7.0
 
 ```
 Copyright (c) 2014 pre-commit dev team: Anthony Sottile, Ken Struys
@@ -916,11 +916,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### pyinstaller 6.21.0
+### pyinstaller 6.22.3
 
 _No license files found for pyinstaller._
 
-### pytest 9.1.1
+### pytest 9.2.0
 
 ```
 The MIT License (MIT)
@@ -946,7 +946,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### ruff 0.16.1
+### ruff 0.17.3
 
 ```
 MIT License
@@ -1381,7 +1381,7 @@ are:
   """
 ```
 
-### ty 0.0.66
+### ty 0.0.97
 
 ```
 MIT License
@@ -1432,12 +1432,12 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ```
 
-### argon2-cffi-bindings 25.1.0
+### argon2-cffi-bindings 26.1.0
 
 ```
 The MIT License (MIT)
 
-Copyright (c) 2021 Hynek Schlawack
+Copyright (c) 2021 Hynek Schlawack and the argon2-cffi-bindings contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1540,7 +1540,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### distlib 0.4.3
+### distlib 0.4.4
 
 ```
 A. HISTORY OF THE SOFTWARE
@@ -1829,7 +1829,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
 OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
-### filelock 3.32.2
+### filelock 4.2.9
 
 ```
 MIT License
@@ -1855,7 +1855,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### identify 2.6.19
+### identify 2.6.20
 
 ```
 Copyright (c) 2017 Chris Kuehl, Anthony Sottile
@@ -1879,7 +1879,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### iniconfig 2.3.0
+### iniconfig 2.3.1
 
 ```
 The MIT License (MIT)
@@ -1960,7 +1960,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 IN THE SOFTWARE.
 ```
 
-### nodeenv 1.10.0
+### nodeenv 1.12.0
 
 ```
 Copyright (c) 2011, Eugene Kalinin.
@@ -2236,7 +2236,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### platformdirs 4.11.0
+### platformdirs 4.14.5
 
 ```
 MIT License
@@ -2262,7 +2262,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### pluggy 1.6.0
+### pluggy 1.7.0
 
 ```
 The MIT License (MIT)
@@ -2288,12 +2288,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### pycparser 3.0
+### pycparser 3.12
 
 ```
 pycparser -- A C parser in Python
 
-Copyright (c) 2008-2022, Eli Bendersky
+Copyright (c) 2008-2027, Eli Bendersky
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
@@ -2320,7 +2320,7 @@ LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### pyinstaller-hooks-contrib 2026.6
+### pyinstaller-hooks-contrib 2026.9
 
 ```
 ============================================
@@ -2846,7 +2846,7 @@ Apache License 2.0
    limitations under the License.
 ```
 
-### pyside6-essentials 6.11.1
+### pyside6-essentials 6.12.0
 
 ```
 Licensees holding valid commercial Qt licenses may use this software in
@@ -2859,7 +2859,7 @@ For the latest licensing terms and conditions, see https://www.qt.io/terms-condi
 For further information use the contact form at https://www.qt.io/contact-us.
 ```
 
-### python-discovery 1.5.1
+### python-discovery 1.9.4
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a
@@ -2940,7 +2940,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### setuptools 83.0.0
+### setuptools 84.2.1
 
 ```
 GNU LESSER GENERAL PUBLIC LICENSE
@@ -4007,7 +4007,7 @@ The following files include code from opensource projects
       You can obtain one at https://mozilla.org/MPL/2.0/.
 ```
 
-### shiboken6 6.11.1
+### shiboken6 6.12.0
 
 ```
 Licensees holding valid commercial Qt licenses may use this software in
@@ -4020,10 +4020,10 @@ For the latest licensing terms and conditions, see https://www.qt.io/terms-condi
 For further information use the contact form at https://www.qt.io/contact-us.
 ```
 
-### virtualenv 21.7.1
+### virtualenv 21.15.5
 
 ```
-Copyright (c) 2020-202x The virtualenv developers
+Copyright (c) 2020-present The virtualenv developers
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
